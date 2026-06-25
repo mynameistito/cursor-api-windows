@@ -10,7 +10,7 @@ configuration or credentials with the GUI desktop apps.
 The original **API for Cursor** project by **Standard Agents**. This CLI fork
 reuses and adapts:
 
-- `worker/` — OpenAI-compatible request/response translation (`openai.ts`,
+- `src/api/` — OpenAI-compatible request/response translation (`openai.ts`,
   `cursor.ts`, `cursor-sdk.ts`, `http.ts`, `sse.ts`, …)
 - `scripts/cursor-sdk-local-agent-bridge.mjs` — local `@cursor/sdk` bridge
 - The sidecar HTTP server design (`windows-app/sidecar/server.ts`)

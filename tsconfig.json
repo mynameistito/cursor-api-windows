@@ -8,8 +8,13 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "lib": ["ES2022"],
-    "types": ["bun", "node"]
+    "lib": ["ES2023"],
+    "types": ["bun", "node"],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"],
+      "@package": ["./package.json"]
+    }
   },
-  "include": ["src", "worker", "scripts", "worker/cloudflare.d.ts"]
+  "include": ["src", "scripts"]
 }

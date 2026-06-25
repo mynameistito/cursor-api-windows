@@ -2,34 +2,37 @@
   "name": "cursor-api-cli-windows",
   "version": "0.1.0",
   "private": false,
-  "type": "module",
   "description": "CLI for a local OpenAI-compatible Cursor API on Windows.",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/mynameistito/cursor-api-cli-windows.git"
-  },
+  "keywords": [
+    "cli",
+    "composer",
+    "cursor",
+    "openai",
+    "windows"
+  ],
   "homepage": "https://github.com/mynameistito/cursor-api-cli-windows#readme",
   "bugs": {
     "url": "https://github.com/mynameistito/cursor-api-cli-windows/issues"
   },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mynameistito/cursor-api-cli-windows.git"
+  },
   "bin": {
     "cursor-api": "./dist/cursor-api.exe"
   },
+  "type": "module",
   "scripts": {
     "dev": "bun run src/cli.ts",
     "typecheck": "tsc --noEmit",
     "build": "bun run scripts/build.ts",
     "stage:bridge": "bun run scripts/stage-bridge.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "check": "ultracite check",
+    "fix": "ultracite fix",
+    "prepare": "lefthook install"
   },
-  "keywords": [
-    "cursor",
-    "composer",
-    "openai",
-    "cli",
-    "windows"
-  ],
-  "license": "MIT",
   "dependencies": {
     "@cursor/sdk": "^1.0.13",
     "commander": "^13.1.0"
@@ -37,11 +40,15 @@
   "devDependencies": {
     "@types/bun": "^1.2.5",
     "@types/node": "^22.13.10",
+    "lefthook": "^2.1.9",
+    "oxfmt": "^0.56.0",
+    "oxlint": "^1.71.0",
     "typescript": "^5.9.3",
+    "ultracite": "7.8.3",
     "vitest": "^4.0.15"
   },
   "engines": {
-    "node": ">=22",
-    "bun": ">=1.2.0"
+    "bun": ">=1.2.0",
+    "node": ">=22"
   }
 }

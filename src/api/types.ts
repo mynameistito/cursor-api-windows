@@ -1,4 +1,4 @@
-/// <reference path="./cloudflare.d.ts" />
+import "./cloudflare.d.ts";
 
 export interface Env {
   ASSETS: Fetcher;
@@ -68,8 +68,17 @@ export interface AuthenticatedAccount {
 }
 
 export type CursorImage =
-  | { url: string; dimension?: { width: number; height: number }; uuid?: string }
-  | { data: string; mimeType: string; dimension?: { width: number; height: number }; uuid?: string };
+  | {
+      url: string;
+      dimension?: { width: number; height: number };
+      uuid?: string;
+    }
+  | {
+      data: string;
+      mimeType: string;
+      dimension?: { width: number; height: number };
+      uuid?: string;
+    };
 
 export interface CursorPrompt {
   text: string;

@@ -1,5 +1,5 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import path from "node:path";
 
 export const APP_NAME = "cursor-api";
 export const DEFAULT_PORT = 8787;
@@ -11,62 +11,56 @@ export interface Settings {
 }
 
 const DEFAULT_SETTINGS: Settings = {
+  autostart: false,
   port: DEFAULT_PORT,
-  autostart: false
 };
 
-function configDir(): string {
+const configDir = (): string => {
   const base = process.env.APPDATA;
   if (!base) {
     throw new Error("APPDATA is not set");
   }
-  return join(base, APP_NAME);
-}
+  return path.join(base, APP_NAME);
+};
 
-export function settingsPath(): string {
-  return join(configDir(), "settings.json");
-}
+export const settingsPath = (): string =>
+  path.join(configDir(), "settings.json");
 
-export function runDir(): string {
-  return join(configDir(), "run");
-}
+export const runDir = (): string => path.join(configDir(), "run");
 
-export function logsDir(): string {
-  return join(configDir(), "logs");
-}
+export const logsDir = (): string => path.join(configDir(), "logs");
 
-export function pidFilePath(): string {
-  return join(runDir(), "cursor-api.pid");
-}
+export const pidFilePath = (): string => path.join(runDir(), "cursor-api.pid");
 
-export function stateFilePath(): string {
-  return join(runDir(), "state.json");
-}
+export const stateFilePath = (): string => path.join(runDir(), "state.json");
 
-export function ensureConfigDirs(): void {
+export const ensureConfigDirs = (): void => {
   mkdirSync(configDir(), { recursive: true });
   mkdirSync(runDir(), { recursive: true });
   mkdirSync(logsDir(), { recursive: true });
-}
+};
 
-export function loadSettings(): Settings {
+export const loadSettings = (): Settings => {
   try {
-    const raw = readFileSync(settingsPath(), "utf8");
+    const raw = readFileSync(settingsPath(), "utf-8");
     const parsed = JSON.parse(raw) as Partial<Settings>;
     return {
+      autostart: parsed.autostart ?? false,
       port: parsed.port ?? DEFAULT_PORT,
-      autostart: parsed.autostart ?? false
     };
   } catch {
     return { ...DEFAULT_SETTINGS };
   }
-}
+};
 
-export function saveSettings(settings: Settings): void {
+export const saveSettings = (settings: Settings): void => {
   ensureConfigDirs();
-  writeFileSync(settingsPath(), `${JSON.stringify(settings, null, 2)}\n`, "utf8");
-}
+  writeFileSync(
+    settingsPath(),
+    `${JSON.stringify(settings, null, 2)}\n`,
+    "utf-8"
+  );
+};
 
-export function baseUrl(port = loadSettings().port): string {
-  return `http://127.0.0.1:${port}/v1`;
-}
+export const baseUrl = (port = loadSettings().port): string =>
+  `http://127.0.0.1:${port}/v1`;

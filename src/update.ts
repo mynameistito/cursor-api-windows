@@ -1,10 +1,17 @@
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import path from "node:path";
 import { promisify } from "node:util";
-import { installRoot } from "./paths";
+
 import { stopDaemon } from "./daemon";
+import { installRoot } from "./paths";
 import { GITHUB_REPO, VERSION } from "./version";
 
 const execFileAsync = promisify(execFile);
@@ -29,89 +36,114 @@ interface GitHubRelease {
   assets: GitHubReleaseAsset[];
 }
 
-/** Compare semver strings. Returns 1 if a > b, -1 if a < b, 0 if equal. */
-export function compareSemver(a: string, b: string): number {
-  const parse = (v: string) => v.replace(/^v/, "").split(".").map((n) => Number.parseInt(n, 10) || 0);
-  const av = parse(a);
-  const bv = parse(b);
+const parseSemver = (value: string): number[] =>
+  value
+    .replace(/^v/u, "")
+    .split(".")
+    .map((part) => Number.parseInt(part, 10) || 0);
+
+export const compareSemver = function compareSemver(
+  a: string,
+  b: string
+): number {
+  const av = parseSemver(a);
+  const bv = parseSemver(b);
   const len = Math.max(av.length, bv.length);
-  for (let i = 0; i < len; i++) {
-    const diff = (av[i] ?? 0) - (bv[i] ?? 0);
-    if (diff !== 0) return diff > 0 ? 1 : -1;
+  for (let index = 0; index < len; index += 1) {
+    const diff = (av[index] ?? 0) - (bv[index] ?? 0);
+    if (diff !== 0) {
+      return diff > 0 ? 1 : -1;
+    }
   }
   return 0;
-}
+};
 
-export async function fetchLatestRelease(): Promise<ReleaseInfo | null> {
-  const res = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, {
-    headers: {
-      Accept: "application/vnd.github+json",
-      "User-Agent": "cursor-api-cli"
+export const fetchLatestRelease =
+  async function fetchLatestRelease(): Promise<ReleaseInfo | null> {
+    const res = await fetch(
+      `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`,
+      {
+        headers: {
+          Accept: "application/vnd.github+json",
+          "User-Agent": "cursor-api-cli",
+        },
+      }
+    );
+    if (res.status === 404) {
+      return null;
     }
-  });
-
-  if (res.status === 404) return null;
-  if (!res.ok) {
-    throw new Error(`GitHub API error: ${res.status} ${res.statusText}`);
-  }
-
-  const data = (await res.json()) as GitHubRelease;
-  const tag = data.tag_name.replace(/^v/, "");
-  const asset = data.assets.find((item) => /^cursor-api-.*-win-x64\.zip$/i.test(item.name));
-  if (!asset) {
-    throw new Error("Latest release has no Windows x64 zip asset.");
-  }
-
-  return {
-    version: tag,
-    tag: data.tag_name,
-    downloadUrl: asset.browser_download_url,
-    publishedAt: data.published_at,
-    releaseNotes: data.body || ""
+    if (!res.ok) {
+      throw new Error(`GitHub API error: ${res.status} ${res.statusText}`);
+    }
+    const data = (await res.json()) as GitHubRelease;
+    const tag = data.tag_name.replace(/^v/u, "");
+    const asset = data.assets.find((item) =>
+      /^cursor-api-.*-win-x64\.zip$/iu.test(item.name)
+    );
+    if (!asset) {
+      throw new Error("Latest release has no Windows x64 zip asset.");
+    }
+    return {
+      downloadUrl: asset.browser_download_url,
+      publishedAt: data.published_at,
+      releaseNotes: data.body || "",
+      tag: data.tag_name,
+      version: tag,
+    };
   };
-}
 
-async function runPowerShell(script: string): Promise<string> {
+const runPowerShell = async function runPowerShell(
+  script: string
+): Promise<string> {
   const { stdout, stderr } = await execFileAsync(
     "powershell",
     ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
-    { windowsHide: true, maxBuffer: 10 * 1024 * 1024 }
+    { maxBuffer: 10 * 1024 * 1024, windowsHide: true }
   );
   if (stderr?.trim()) {
     // PowerShell writes informational output to stderr; only fail on thrown errors.
   }
   return stdout;
-}
+};
 
-async function downloadFile(url: string, dest: string): Promise<void> {
+const downloadFile = async function downloadFile(
+  url: string,
+  dest: string
+): Promise<void> {
   const script = `
 $ProgressPreference = 'SilentlyContinue'
-Invoke-WebRequest -Uri '${url.replace(/'/g, "''")}' -OutFile '${dest.replace(/'/g, "''")}' -UseBasicParsing
+Invoke-WebRequest -Uri '${url.replaceAll("'", "''")}' -OutFile '${dest.replaceAll("'", "''")}' -UseBasicParsing
 `.trim();
   await runPowerShell(script);
-}
+};
 
-async function extractZip(zipPath: string, destDir: string): Promise<void> {
+const extractZip = async function extractZip(
+  zipPath: string,
+  destDir: string
+): Promise<void> {
   mkdirSync(destDir, { recursive: true });
   const script = `
 $ProgressPreference = 'SilentlyContinue'
-if (Test-Path '${destDir.replace(/'/g, "''")}') { Remove-Item -Recurse -Force '${destDir.replace(/'/g, "''")}' }
-New-Item -ItemType Directory -Path '${destDir.replace(/'/g, "''")}' -Force | Out-Null
-Expand-Archive -Path '${zipPath.replace(/'/g, "''")}' -DestinationPath '${destDir.replace(/'/g, "''")}' -Force
+if (Test-Path '${destDir.replaceAll("'", "''")}') { Remove-Item -Recurse -Force '${destDir.replaceAll("'", "''")}' }
+New-Item -ItemType Directory -Path '${destDir.replaceAll("'", "''")}' -Force | Out-Null
+Expand-Archive -Path '${zipPath.replaceAll("'", "''")}' -DestinationPath '${destDir.replaceAll("'", "''")}' -Force
 `.trim();
   await runPowerShell(script);
-}
+};
 
-async function copyBundle(sourceDir: string, targetDir: string): Promise<void> {
+const copyBundle = async function copyBundle(
+  sourceDir: string,
+  targetDir: string
+): Promise<void> {
   mkdirSync(targetDir, { recursive: true });
   const script = `
 $ProgressPreference = 'SilentlyContinue'
-Copy-Item -Path (Join-Path '${sourceDir.replace(/'/g, "''")}' '*') -Destination '${targetDir.replace(/'/g, "''")}' -Recurse -Force
+Copy-Item -Path (Join-Path '${sourceDir.replaceAll("'", "''")}' '*') -Destination '${targetDir.replaceAll("'", "''")}' -Recurse -Force
 `.trim();
   await runPowerShell(script);
-}
+};
 
-export async function checkForUpdate(): Promise<{
+export const checkForUpdate = async function checkForUpdate(): Promise<{
   current: string;
   latest: ReleaseInfo | null;
   updateAvailable: boolean;
@@ -123,75 +155,86 @@ export async function checkForUpdate(): Promise<{
   return {
     current: VERSION,
     latest,
-    updateAvailable: compareSemver(latest.version, VERSION) > 0
+    updateAvailable: compareSemver(latest.version, VERSION) > 0,
   };
-}
+};
 
-export async function runUpdate(options: { force?: boolean } = {}): Promise<void> {
+export const runUpdate = async function runUpdate(
+  options: {
+    force?: boolean;
+  } = {}
+): Promise<void> {
   const { current, latest, updateAvailable } = await checkForUpdate();
   if (!latest) {
-    throw new Error("No published releases found. Install from source or wait for the first GitHub release.");
+    throw new Error(
+      "No published releases found. Install from source or wait for the first GitHub release."
+    );
   }
-
   if (!updateAvailable && !options.force) {
     console.log(`cursor-api ${current} is up to date.`);
     return;
   }
-
   if (updateAvailable) {
     console.log(`Updating cursor-api ${current} -> ${latest.version}`);
   } else {
     console.log(`Reinstalling cursor-api ${current}`);
   }
-
-  const wasRunning = existsSync(join(process.env.APPDATA || "", "cursor-api", "run", "cursor-api.pid"));
+  const wasRunning = existsSync(
+    path.join(process.env.APPDATA || "", "cursor-api", "run", "cursor-api.pid")
+  );
   if (wasRunning) {
     console.log("Stopping cursor-api…");
     await stopDaemon();
   }
-
-  const workDir = join(tmpdir(), `cursor-api-update-${latest.version}`);
-  const zipPath = join(workDir, "bundle.zip");
-  const extractDir = join(workDir, "extract");
-
-  rmSync(workDir, { recursive: true, force: true });
+  const workDir = path.join(tmpdir(), `cursor-api-update-${latest.version}`);
+  const zipPath = path.join(workDir, "bundle.zip");
+  const extractDir = path.join(workDir, "extract");
+  rmSync(workDir, { force: true, recursive: true });
   mkdirSync(workDir, { recursive: true });
-
   console.log("Downloading release…");
   await downloadFile(latest.downloadUrl, zipPath);
-
   console.log("Extracting…");
   await extractZip(zipPath, extractDir);
-
   const targetDir = installRoot();
   console.log(`Installing to ${targetDir}…`);
   await copyBundle(extractDir, targetDir);
-
-  rmSync(workDir, { recursive: true, force: true });
-
+  rmSync(workDir, { force: true, recursive: true });
   console.log(`cursor-api updated to ${latest.version}.`);
   if (wasRunning) {
     console.log("Run: cursor-api start");
   }
-}
+};
 
-/** Persist last update check result for `cursor-api status`. */
-export function recordUpdateCheck(result: Awaited<ReturnType<typeof checkForUpdate>>): void {
-  const dir = join(process.env.APPDATA || "", "cursor-api");
+export const recordUpdateCheck = function recordUpdateCheck(
+  result: Awaited<ReturnType<typeof checkForUpdate>>
+): void {
+  const dir = path.join(process.env.APPDATA || "", "cursor-api");
   mkdirSync(dir, { recursive: true });
   writeFileSync(
-    join(dir, "update-check.json"),
+    path.join(dir, "update-check.json"),
     `${JSON.stringify({ checkedAt: new Date().toISOString(), ...result }, null, 2)}\n`,
-    "utf8"
+    "utf-8"
   );
-}
+};
 
-export function readLastUpdateCheck(): Record<string, unknown> | null {
-  const path = join(process.env.APPDATA || "", "cursor-api", "update-check.json");
-  if (!existsSync(path)) return null;
+export const readLastUpdateCheck = function readLastUpdateCheck(): Record<
+  string,
+  unknown
+> | null {
+  const filePath = path.join(
+    process.env.APPDATA || "",
+    "cursor-api",
+    "update-check.json"
+  );
+  if (!existsSync(filePath)) {
+    return null;
+  }
   try {
-    return JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    return JSON.parse(readFileSync(filePath, "utf-8")) as Record<
+      string,
+      unknown
+    >;
   } catch {
     return null;
   }
-}
+};

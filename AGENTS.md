@@ -6,11 +6,11 @@
 
 ## Layout
 
-- `src/cli.ts` — Commander entrypoint
+- `src/cli.ts` — Commander entrypoint (`@/` imports)
 - `src/daemon.ts` — background supervisor (PID file, start/stop)
 - `src/server.ts` — in-process OpenAI-compatible HTTP server
 - `src/bridge.ts` — spawns bundled Node SDK bridge
-- `worker/` — shared API translation layer
+- `src/api/` — shared API translation layer
 
 ## Build
 

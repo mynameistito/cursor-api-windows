@@ -1,36 +1,44 @@
 #!/usr/bin/env bun
-import { Command } from "commander";
-import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
-import { deleteApiKey, maskApiKey, readApiKey, writeApiKey } from "./credentials";
-import { loadSettings, saveSettings, baseUrl, DEFAULT_PORT } from "./config";
-import { followLogs, readRecentLogs } from "./logs";
+import { createInterface } from "node:readline/promises";
+
+import { Command } from "commander";
+
+import { configureAgent, listAgents } from "@/agents/index";
+import { loadSettings, saveSettings, baseUrl, DEFAULT_PORT } from "@/config";
+import {
+  deleteApiKey,
+  maskApiKey,
+  readApiKey,
+  writeApiKey,
+} from "@/credentials";
 import {
   checkHealth,
   getStatus,
   runDaemonForeground,
   startDaemon,
-  stopDaemon
-} from "./daemon";
-import { configureAgent, listAgents } from "./agents/index";
-import { VERSION } from "./version";
-import { checkForUpdate, recordUpdateCheck, runUpdate } from "./update";
+  stopDaemon,
+} from "@/daemon";
+import { followLogs, readRecentLogs } from "@/logs";
+import { checkForUpdate, recordUpdateCheck, runUpdate } from "@/update";
+import { VERSION } from "@/version";
 
-function printHeading(text: string): void {
+const printHeading = (text: string): void => {
   console.log(`\n${text}`);
   console.log("─".repeat(text.length));
-}
+};
 
-async function promptHidden(prompt: string): Promise<string> {
+const promptHidden = async (prompt: string): Promise<string> => {
   const rl = createInterface({ input, output });
   try {
-    return (await rl.question(prompt)).trim();
+    const answer = await rl.question(prompt);
+    return answer.trim();
   } finally {
     rl.close();
   }
-}
+};
 
-function buildProgram(): Command {
+const buildProgram = (): Command => {
   const program = new Command("cursor-api")
     .description("Local OpenAI-compatible Cursor API for Windows (CLI)")
     .version(VERSION);
@@ -42,14 +50,17 @@ function buildProgram(): Command {
     .description("Save your Cursor API key (crsr_…)")
     .option("--key <key>", "API key value (omit to prompt)")
     .action(async (opts: { key?: string }) => {
-      const value = opts.key?.trim() || (await promptHidden("Cursor API key: "));
+      const value =
+        opts.key?.trim() || (await promptHidden("Cursor API key: "));
       if (!value) {
         console.error("No key provided.");
         process.exit(1);
       }
       await writeApiKey(value);
       console.log("API key saved.");
-      console.log("Restart the server if it is already running: cursor-api restart");
+      console.log(
+        "Restart the server if it is already running: cursor-api restart"
+      );
     });
 
   key
@@ -57,7 +68,11 @@ function buildProgram(): Command {
     .description("Show whether a key is configured")
     .action(async () => {
       const keyValue = await readApiKey();
-      console.log(keyValue.trim() ? `configured: ${maskApiKey(keyValue)}` : "not configured");
+      console.log(
+        keyValue.trim()
+          ? `configured: ${maskApiKey(keyValue)}`
+          : "not configured"
+      );
     });
 
   key
@@ -102,7 +117,9 @@ function buildProgram(): Command {
       console.log(`port:      ${status.port}`);
       console.log(`base url:  ${status.baseUrl}`);
       console.log(`bridge:    ${status.bridgePort ?? "not running"}`);
-      console.log(`api key:   ${status.hasApiKey ? "configured" : "not configured"}`);
+      console.log(
+        `api key:   ${status.hasApiKey ? "configured" : "not configured"}`
+      );
       try {
         const update = await checkForUpdate();
         recordUpdateCheck(update);
@@ -143,7 +160,7 @@ function buildProgram(): Command {
     .command("health")
     .description("Check the local /health endpoint")
     .action(async () => {
-      const port = loadSettings().port;
+      const { port } = loadSettings();
       try {
         const res = await checkHealth(port);
         const body = await res.text();
@@ -169,7 +186,7 @@ function buildProgram(): Command {
     .description(`Set the HTTP port (default ${DEFAULT_PORT})`)
     .action((value: string) => {
       const parsed = Number.parseInt(value, 10);
-      if (!Number.isInteger(parsed) || parsed <= 0 || parsed >= 65536) {
+      if (!Number.isInteger(parsed) || parsed <= 0 || parsed >= 65_536) {
         console.error("Port must be an integer between 1 and 65535.");
         process.exit(1);
       }
@@ -179,7 +196,9 @@ function buildProgram(): Command {
       console.log(`Port set to ${parsed}. Restart for changes to take effect.`);
     });
 
-  const configure = program.command("configure").description("Wire an agent to cursor-api");
+  const configure = program
+    .command("configure")
+    .description("Wire an agent to cursor-api");
 
   configure
     .command("list")
@@ -187,13 +206,17 @@ function buildProgram(): Command {
     .action(async () => {
       const agents = await listAgents();
       for (const agent of agents) {
-        console.log(`${agent.id.padEnd(10)} ${agent.name.padEnd(12)} ${agent.status}`);
+        console.log(
+          `${agent.id.padEnd(10)} ${agent.name.padEnd(12)} ${agent.status}`
+        );
       }
     });
 
   configure
     .command("agent <id>")
-    .description("Configure a supported agent (opencode, codex, vscode, cline, kilo, pi)")
+    .description(
+      "Configure a supported agent (opencode, codex, vscode, cline, kilo, pi)"
+    )
     .action(async (id: string) => {
       const url = baseUrl();
       const result = await configureAgent(id, url);
@@ -207,7 +230,9 @@ function buildProgram(): Command {
       console.log(baseUrl());
     });
 
-  const update = program.command("update").description("Check for or install updates");
+  const update = program
+    .command("update")
+    .description("Check for or install updates");
 
   update
     .command("check")
@@ -220,7 +245,9 @@ function buildProgram(): Command {
         process.exit(1);
       }
       if (result.updateAvailable) {
-        console.log(`Update available: ${result.current} -> ${result.latest.version}`);
+        console.log(
+          `Update available: ${result.current} -> ${result.latest.version}`
+        );
         console.log(`Published: ${result.latest.publishedAt}`);
         if (result.latest.releaseNotes.trim()) {
           console.log("\nRelease notes:\n");
@@ -241,7 +268,7 @@ function buildProgram(): Command {
     });
 
   return program;
-}
+};
 
 const program = buildProgram();
 await program.parseAsync(process.argv);

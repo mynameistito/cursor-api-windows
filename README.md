@@ -4,12 +4,12 @@ CLI-first Windows build of a local **OpenAI-compatible API** backed by **Cursor 
 No GUI — install from PowerShell, run `cursor-api` in the terminal, point any OpenAI client at
 `http://127.0.0.1:8787/v1`.
 
-| | |
-|---|---|
-| Repo | [mynameistito/cursor-api-cli-windows](https://github.com/mynameistito/cursor-api-cli-windows) |
-| Default base URL | `http://127.0.0.1:8787/v1` |
-| Models | `composer-2.5`, `composer-2.5-fast` |
-| Stack | TypeScript + Bun (compiled CLI) + bundled Node bridge |
+|                  |                                                                                               |
+| ---------------- | --------------------------------------------------------------------------------------------- |
+| Repo             | [mynameistito/cursor-api-cli-windows](https://github.com/mynameistito/cursor-api-cli-windows) |
+| Default base URL | `http://127.0.0.1:8787/v1`                                                                    |
+| Models           | `composer-2.5`, `composer-2.5-fast`                                                           |
+| Stack            | TypeScript + Bun (compiled CLI) + bundled Node bridge                                         |
 
 > **Credits:** Derived from [standardagents/composer-api](https://github.com/standardagents/composer-api) (MIT).
 > See [CREDITS.md](CREDITS.md) for full attribution.
@@ -81,11 +81,11 @@ cursor-api configure agent <id>  # opencode supported in v0.1
 
 ## Updates
 
-| Method | Command |
-|---|---|
-| From the CLI | `cursor-api update check` then `cursor-api update` |
-| PowerShell installer | `irm …/install.ps1 \| iex -Update` |
-| Manual | Download the latest `.zip` from [Releases](https://github.com/mynameistito/cursor-api-cli-windows/releases) |
+| Method               | Command                                                                                                     |
+| -------------------- | ----------------------------------------------------------------------------------------------------------- |
+| From the CLI         | `cursor-api update check` then `cursor-api update`                                                          |
+| PowerShell installer | `irm …/install.ps1 \| iex -Update`                                                                          |
+| Manual               | Download the latest `.zip` from [Releases](https://github.com/mynameistito/cursor-api-cli-windows/releases) |
 
 Updates stop the background server, replace files in the install directory, and preserve your
 settings in `%APPDATA%\cursor-api\`.
@@ -112,13 +112,13 @@ Release builds are produced by GitHub Actions when you push a tag (`v0.1.0`).
 
 ## Where things are stored
 
-| Item | Location |
-|---|---|
-| Install | `%LOCALAPPDATA%\Programs\cursor-api\` (default) |
-| Settings | `%APPDATA%\cursor-api\settings.json` |
-| API key (encrypted) | `%APPDATA%\cursor-api\api-key.enc` |
-| PID / state | `%APPDATA%\cursor-api\run\` |
-| Logs | `%APPDATA%\cursor-api\logs\` |
+| Item                | Location                                        |
+| ------------------- | ----------------------------------------------- |
+| Install             | `%LOCALAPPDATA%\Programs\cursor-api\` (default) |
+| Settings            | `%APPDATA%\cursor-api\settings.json`            |
+| API key (encrypted) | `%APPDATA%\cursor-api\api-key.enc`              |
+| PID / state         | `%APPDATA%\cursor-api\run\`                     |
+| Logs                | `%APPDATA%\cursor-api\logs\`                    |
 
 Independent from the [API for Cursor](https://github.com/standardagents/composer-api) GUI app.
 
@@ -128,7 +128,7 @@ Independent from the [API for Cursor](https://github.com/standardagents/composer
 
 ```text
 cursor-api.exe (Bun-compiled CLI)
-  ├─ HTTP server (in-process, worker/ + src/server.ts)
+  ├─ HTTP server (in-process, src/server.ts + src/api/)
   └─ bridge/ (child process)
        node.exe + cursor-sdk-local-agent-bridge.mjs + @cursor/sdk
 ```
