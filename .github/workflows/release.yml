@@ -71,19 +71,9 @@ jobs:
 
       - name: Resolve release tag
         id: release
-        shell: pwsh
         env:
           PUBLISHED: ${{ needs.version.outputs.published }}
-        run: |
-          if ($env:GITHUB_REF -like 'refs/tags/v*') {
-            $tag = $env:GITHUB_REF_NAME
-          } elseif ($env:PUBLISHED -eq 'true') {
-            $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
-            $tag = "v$version"
-          } else {
-            $tag = ''
-          }
-          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+        run: bun run release tag --github-output
 
       - name: Install dependencies
         run: bun install
@@ -95,11 +85,7 @@ jobs:
         run: bun run build
 
       - name: Zip release
-        shell: pwsh
-        run: |
-          $tag = '${{ steps.release.outputs.tag }}'
-          $version = if ($tag) { $tag -replace '^v', '' } else { '0.0.0-dev' }
-          Compress-Archive -Path dist/cursor-api/* -DestinationPath "dist/cursor-api-$version-win-x64.zip" -Force
+        run: bun run release zip --tag ${{ steps.release.outputs.tag }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -109,9 +95,7 @@ jobs:
 
       - name: Attach to GitHub Release
         if: steps.release.outputs.tag != ''
-        shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_REF_NAME: ${{ steps.release.outputs.tag }}
-        run: bun run release:upload
+        run: bun run release upload --tag ${{ steps.release.outputs.tag }}
