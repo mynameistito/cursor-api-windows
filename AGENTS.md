@@ -20,3 +20,10 @@ bun run build
 ```
 
 The release bundle is `dist/cursor-api/` (`cursor-api.exe` + `bridge/`).
+
+## Releases
+
+- Add `.changeset/*.md` files with `bun run changeset` for user-facing changes.
+- Merging to `main` triggers `.github/workflows/version.yml` (Changesets version PR or tag + GitHub release).
+- Pushing a `v*` tag triggers `.github/workflows/release.yml` (build zip artifact).
+- Changelog lives in `CHANGELOG.md`; release notes come from Changesets.
