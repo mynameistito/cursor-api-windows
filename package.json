@@ -35,7 +35,8 @@
     "changeset": "changeset",
     "changeset-add": "bun run scripts/changeset-add.ts",
     "version:packages": "changeset version",
-    "release:tag": "changeset tag"
+    "release:tag": "changeset tag",
+    "release:upload": "bun run scripts/upload-release.ts"
   },
   "dependencies": {
     "@cursor/sdk": "^1.0.13",
