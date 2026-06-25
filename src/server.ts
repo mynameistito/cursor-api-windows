@@ -183,10 +183,10 @@ const buildEnv = function buildEnv(): Env {
   };
 };
 
-const env = buildEnv();
+const env = (): Env => buildEnv();
 
 const hasSdkBridge = function hasSdkBridge(): boolean {
-  return Boolean(env.CURSOR_SDK_BRIDGE_URL?.trim());
+  return Boolean(env().CURSOR_SDK_BRIDGE_URL?.trim());
 };
 
 const sessionAffinity = function sessionAffinity(request: Request): string {
@@ -643,7 +643,7 @@ const handleSdkRoute = async function handleSdkRoute(
   const makeStream = async (
     attempt: number
   ): Promise<AsyncIterable<CursorTextEvent>> => {
-    const completion = await createCursorSdkCompletion(env, deps, apiKey, {
+    const completion = await createCursorSdkCompletion(env(), deps, apiKey, {
       allowToolCall: (toolCall) => sdkAllowToolCall(prepared, toolCall),
       clientTools: prepared.tools,
       incrementalPrompt: attempt === 0 ? incrementalPrompt : undefined,
@@ -806,7 +806,7 @@ const handleChatCompletions = async function handleChatCompletions(
       chatIncrementalPrompt(body, cursorModel)
     );
   }
-  const completion = await createCursorCompletion(env, deps, apiKey, {
+  const completion = await createCursorCompletion(env(), deps, apiKey, {
     model: prepared.cursorModel,
     prompt: prepared.prompt,
   });
@@ -868,7 +868,7 @@ const handleResponses = async function handleResponses(
   if (hasSdkBridge()) {
     return handleSdkRoute("responses", request, prepared, apiKey, id, created);
   }
-  const completion = await createCursorCompletion(env, deps, apiKey, {
+  const completion = await createCursorCompletion(env(), deps, apiKey, {
     model: prepared.cursorModel,
     prompt: prepared.prompt,
   });
@@ -977,7 +977,7 @@ const handleAnthropicMessages = async function handleAnthropicMessages(
   const makeStream = async (
     _attempt: number
   ): Promise<AsyncIterable<CursorTextEvent>> => {
-    const completion = await createCursorSdkCompletion(env, deps, apiKey, {
+    const completion = await createCursorSdkCompletion(env(), deps, apiKey, {
       allowToolCall: (toolCall) => sdkAllowToolCall(prepared, toolCall),
       clientTools: prepared.tools,
       model: prepared.cursorModel,
