@@ -2208,18 +2208,3 @@ export const collectCursorSdkOutput = async function collectCursorSdkOutput(
   }
   return { text, toolCalls };
 };
-
-export const resetCursorSdkSessionCacheForTest =
-  function resetCursorSdkSessionCacheForTest() {
-    sdkSessions.clear();
-  };
-
-export const cursorSdkTestExports = {
-  decodeLocalAgentServerFrame,
-  encodeAgentClientRequestContextResult,
-  encodeAgentClientRunRequest,
-  isEmittableSdkToolCall,
-  normalizeSdkToolCallForOpenCode,
-  retryPromptAfterMissingTool,
-  retryPromptAfterUnsupportedTool,
-};

@@ -62,7 +62,7 @@ const pipeChild = (channel: "bridge", child: ChildProcess): void => {
   });
 };
 
-export const assertBridgeRuntime = (): void => {
+const assertBridgeRuntime = (): void => {
   const script = bridgeScriptPath();
   const node = bridgeNodePath();
   const dir = bridgeDir();

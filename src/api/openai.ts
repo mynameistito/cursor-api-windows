@@ -2,9 +2,7 @@ import { HttpError } from "./http";
 import { encodeSse } from "./sse";
 import type { CursorImage, CursorPrompt, CursorToolCall } from "./types";
 
-export type ApiKind = "chat" | "responses";
-
-export interface PreparedRequest {
+interface PreparedRequest {
   model: string;
   cursorModel?: {
     id: string;
@@ -4874,82 +4872,6 @@ const requestedToolHint = function requestedToolHint(toolName: string): string {
   return `Use SDK mcp now with providerIdentifier "client", toolName "${toolName}", and args matching the ${toolName} schema. Do not substitute a different tool.`;
 };
 
-const appendSdkToolInventory = function appendSdkToolInventory(
-  transcript: string[],
-  tools: OpenAiToolSpec[],
-  toolChoice: unknown,
-  context?: ToolCallContext
-) {
-  if (!tools.length) {
-    return;
-  }
-  transcript.push(
-    "",
-    "OPENCODE TOOL INVENTORY:",
-    `Client tool targets: ${tools.map((tool) => tool.name).join(", ")}`,
-    "These are OpenCode execution targets, not the names you should emit.",
-    "For local work, emit only SDK tool names from the SDK TOOL ROUTING MAP. The adapter forwards those SDK calls to the matching OpenCode tool names and schemas.",
-    "Prefer built-in SDK routes for shell/read/write/edit/glob/grep/ls-style OpenCode tools. Use SDK mcp for unique OpenCode tools and MCP/server tools.",
-    "When the user names a specific allowed client tool, use the matching SDK TOOL ROUTING MAP route and do not substitute a different tool.",
-    "For general local work, prefer shell/read/write/edit/glob/grep/ls style tool requests when those capabilities are present."
-  );
-  for (const tool of tools) {
-    transcript.push(
-      JSON.stringify(toolInventoryRecord(tool, { includeSdkMcp: true }))
-    );
-  }
-  appendSdkRoutingMap(transcript, tools, context);
-  if (
-    isRecord(toolChoice) &&
-    toolChoice.type === "function" &&
-    isRecord(toolChoice.function) &&
-    typeof toolChoice.function.name === "string"
-  ) {
-    transcript.push(requestedToolHint(toolChoice.function.name));
-  } else if (toolChoice === "required") {
-    transcript.push("You must call at least one tool.");
-  }
-};
-
-const sdkWorkspaceMutationStatusMessage =
-  function sdkWorkspaceMutationStatusMessage(
-    done: boolean,
-    requestedTool: string | undefined
-  ): string {
-    if (done) {
-      return "A file-mutating tool call has already been made. Continue from the returned tool results and run verification commands when needed.";
-    }
-    if (requestedTool) {
-      return "No file-mutating tool call has been made yet. Your next tool call must use the explicitly requested client tool, not shell/write as a substitute.";
-    }
-    return "No file-mutating tool call has been made yet. Your next tool call must be write or shell with complete arguments, not glob, edit, or prose.";
-  };
-
-const appendSdkWorkspaceMutationRequirement =
-  function appendSdkWorkspaceMutationRequirement(
-    transcript: string[],
-    required: boolean,
-    done: boolean,
-    tools: OpenAiToolSpec[],
-    latestUserText: string
-  ) {
-    if (!required) {
-      return;
-    }
-    const requestedTool = explicitlyRequestedToolName(latestUserText, tools);
-    const toolHint = requestedTool
-      ? requestedToolHint(requestedTool)
-      : "Use SDK shell/write when those routes map to client bash/write. Use SDK mcp for unique writer tools. Do not use edit for new files.";
-    transcript.push(
-      "",
-      "SDK WORKSPACE MUTATION REQUIRED:",
-      "The user is asking you to create or change project files. You must perform the change with local OpenCode tools.",
-      "If the workspace is empty, stop probing after the first empty result and create the project files.",
-      toolHint,
-      sdkWorkspaceMutationStatusMessage(done, requestedTool)
-    );
-  };
-
 const toolSpecByName = function toolSpecByName(
   tools: OpenAiToolSpec[],
   name: string
@@ -5533,147 +5455,6 @@ const sdkToolResultFeedback = function sdkToolResultFeedback(
     type: "tool_call",
   };
 };
-
-const rememberOpenCodeToolCalls = function rememberOpenCodeToolCalls(
-  toolCalls: unknown[],
-  output: Map<
-    string,
-    {
-      name: string;
-      args: Record<string, unknown>;
-    }
-  >
-) {
-  for (const toolCall of toolCalls) {
-    if (!isRecord(toolCall) || typeof toolCall.id !== "string") {
-      continue;
-    }
-    const fn = isRecord(toolCall.function) ? toolCall.function : undefined;
-    if (!fn || typeof fn.name !== "string") {
-      continue;
-    }
-    output.set(toolCall.id, {
-      args: parseToolCallArguments(fn.arguments),
-      name: fn.name,
-    });
-  }
-};
-
-export const prepareOpencodeSdkChatRequest =
-  function prepareOpencodeSdkChatRequest(
-    body: unknown,
-    cursorModel:
-      | {
-          id: string;
-        }
-      | undefined
-  ): PreparedRequest {
-    const record = expectRecord(body, "body");
-    const messages = expectArray(record.messages, "messages");
-    validateCommonUnsupported(record);
-    if (record.functions !== undefined) {
-      throw new HttpError(
-        "Legacy function calling is not supported by this adapter.",
-        400,
-        "unsupported_parameter",
-        "functions"
-      );
-    }
-    const tools =
-      record.tool_choice === "none" ? [] : parseChatTools(record.tools);
-    const toolContext = toolCallContextFromMessages(messages);
-    const model =
-      typeof record.model === "string" && record.model.trim()
-        ? record.model.trim()
-        : "composer-2.5";
-    const latestUserText = latestUserTextFromMessages(messages);
-    const workspaceMutationRequired = shouldRequireLocalTool(
-      latestUserText,
-      tools
-    );
-    const workspaceMutationDone =
-      workspaceMutationRequired &&
-      hasRequiredLocalToolCall(messages, tools, latestUserText);
-    const transcript: string[] = [
-      "You are running through an SDK-compatible OpenCode harness.",
-      "OpenCode owns local tool execution. When local inspection, shell commands, or file changes are needed, request a tool call and wait for the tool result.",
-      "When the conversation includes LOCAL OPENCODE TOOL RESULT records, treat them as completed SDK tool_call results for your previous tool requests and continue from those results.",
-      "If the user explicitly names an allowed client tool, use that tool. Non-builtin client tools and OpenCode MCP/server tools are called through SDK mcp with providerIdentifier, toolName, and args.",
-      "For creating new files when no specific client tool is requested, request write calls with both path and fileText. Do not use edit for new files or emit edit calls without complete replacement details.",
-      "For project scaffolding when no specific client tool is requested, prefer shell with a complete command that creates files using heredocs, installs dependencies, and runs tests; shell requires the command argument.",
-      "When starting a dev server or other long-running watcher, start it in the background with output redirected and return immediately; do not request a foreground server command.",
-      "Do not say that agent mode or tools are unavailable. Do not ask the user to switch modes.",
-    ];
-    appendSdkToolInventory(transcript, tools, record.tool_choice, toolContext);
-    appendSdkWorkspaceMutationRequirement(
-      transcript,
-      workspaceMutationRequired,
-      workspaceMutationDone,
-      tools,
-      latestUserText
-    );
-    transcript.push("", "Conversation:");
-    const images: CursorImage[] = [];
-    const toolCallById = new Map<
-      string,
-      {
-        name: string;
-        args: Record<string, unknown>;
-      }
-    >();
-    for (const message of messages) {
-      const item = expectRecord(message, "messages[]");
-      const role = typeof item.role === "string" ? item.role : "user";
-      const { text, images: messageImages } = contentToTextAndImages(
-        item.content,
-        role
-      );
-      images.push(...messageImages);
-      if (role === "tool") {
-        const toolCallId =
-          typeof item.tool_call_id === "string" ? item.tool_call_id : "";
-        const toolName = typeof item.name === "string" ? item.name : "";
-        const label = [
-          toolName ? `name=${toolName}` : "",
-          toolCallId ? `tool_call_id=${toolCallId}` : "",
-        ]
-          .filter(Boolean)
-          .join(" ");
-        transcript.push(
-          `TOOL RESULT${label ? ` (${label})` : ""}: ${text || "[empty]"}`
-        );
-        transcript.push(
-          `LOCAL OPENCODE TOOL RESULT: ${JSON.stringify(sdkToolResultFeedback(toolCallId, toolName, text, toolCallById, tools))}`
-        );
-      } else {
-        transcript.push(`${role.toUpperCase()}: ${text || "[empty]"}`);
-      }
-      if (Array.isArray(item.tool_calls)) {
-        transcript.push(
-          `${role.toUpperCase()} TOOL_CALLS: ${JSON.stringify(item.tool_calls)}`
-        );
-        rememberOpenCodeToolCalls(item.tool_calls, toolCallById);
-      }
-    }
-    appendChatOptions(transcript, record);
-    const text = transcript.join("\n");
-    return {
-      cursorModel,
-      includeUsage: includeStreamUsage(record),
-      model,
-      prompt: { mode: "agent", text, ...(images.length ? { images } : {}) },
-      promptChars: text.length,
-      requiresLocalTool: workspaceMutationRequired && !workspaceMutationDone,
-      responseMetadata: {
-        temperature: numberOrNull(record.temperature),
-        top_p: numberOrNull(record.top_p),
-      },
-      storeResponse: false,
-      stream: record.stream === true,
-      toolContext,
-      tools,
-    };
-  };
 
 const responseInputArray = function responseInputArray(
   input: unknown
@@ -6449,27 +6230,6 @@ export const responseObject = function responseObject(input: {
     usage: responseUsageFromChars(input.model, input.promptChars, outputChars),
     user: null,
     ...input.metadata,
-  };
-};
-
-const responseInputItemId = function responseInputItemId(
-  item: unknown
-): string | undefined {
-  return isRecord(item) && typeof item.id === "string" ? item.id : undefined;
-};
-
-export const responseInputItemsObject = function responseInputItemsObject(
-  inputItems: unknown[] = []
-): Record<string, unknown> {
-  const data = inputItems.map((item, index) =>
-    normalizeResponseInputItem(item, index)
-  );
-  return {
-    data,
-    first_id: responseInputItemId(data[0]) ?? null,
-    has_more: false,
-    last_id: responseInputItemId(data.at(-1)) ?? null,
-    object: "list",
   };
 };
 

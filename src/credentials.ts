@@ -10,8 +10,7 @@ import path from "node:path";
 import { APP_NAME, ensureConfigDirs } from "@/config";
 
 /** Independent credential namespace (does not share with API for Cursor GUI). */
-export const CREDENTIAL_SERVICE = "ai.cursorapi.cli";
-export const CREDENTIAL_ACCOUNT = "cursor-api-key";
+const CREDENTIAL_SERVICE = "ai.cursorapi.cli";
 
 const SECRET_FILE = "api-key.enc";
 

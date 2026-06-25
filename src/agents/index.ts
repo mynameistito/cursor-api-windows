@@ -8,7 +8,7 @@ const BRAND = "cursor-api";
 
 const LOCAL_API_KEY = LOCAL_API_KEY_LITERAL;
 
-export interface AgentInfo {
+interface AgentInfo {
   id: string;
   name: string;
   status: "configured" | "not_configured" | "not_installed";

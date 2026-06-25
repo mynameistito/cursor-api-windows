@@ -50,7 +50,7 @@ export const anthropicError = function anthropicError(
   return { error: { message, type }, type: "error" };
 };
 
-export const flattenToolResultContent = function flattenToolResultContent(
+const flattenToolResultContent = function flattenToolResultContent(
   content: unknown,
   isError = false
 ): string {
@@ -79,7 +79,7 @@ export const flattenToolResultContent = function flattenToolResultContent(
   return isError ? `[tool error] ${text}` : text;
 };
 
-export const mapToolChoice = function mapToolChoice(tc: unknown): unknown {
+const mapToolChoice = function mapToolChoice(tc: unknown): unknown {
   if (!isRecord(tc)) {
     return undefined;
   }

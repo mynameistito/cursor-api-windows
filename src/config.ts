@@ -5,7 +5,7 @@ export const APP_NAME = "cursor-api";
 export const DEFAULT_PORT = 8787;
 export const LOCAL_API_KEY_LITERAL = "cursor-local";
 
-export interface Settings {
+interface Settings {
   port: number;
   autostart: boolean;
 }
@@ -23,8 +23,7 @@ const configDir = (): string => {
   return path.join(base, APP_NAME);
 };
 
-export const settingsPath = (): string =>
-  path.join(configDir(), "settings.json");
+const settingsPath = (): string => path.join(configDir(), "settings.json");
 
 export const runDir = (): string => path.join(configDir(), "run");
 

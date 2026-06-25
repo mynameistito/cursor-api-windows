@@ -21,14 +21,6 @@ import type {
   Env,
 } from "./types";
 
-interface CursorModelResponse {
-  items?: {
-    id: string;
-    displayName?: string;
-    aliases?: string[];
-  }[];
-}
-
 interface CursorAccessTokenResponse {
   accessToken?: string;
 }
@@ -709,20 +701,12 @@ const cursorPublicJson = async function cursorPublicJson<T>(
   return response.json() as Promise<T>;
 };
 
-export const verifyCursorApiKey = function verifyCursorApiKey(
+const verifyCursorApiKey = function verifyCursorApiKey(
   env: Env,
   deps: Deps,
   apiKey: string
 ): Promise<CursorMe> {
   return cursorPublicJson<CursorMe>(env, deps, apiKey, "/v1/me");
-};
-
-export const listCursorModels = function listCursorModels(
-  env: Env,
-  deps: Deps,
-  apiKey: string
-): Promise<CursorModelResponse> {
-  return cursorPublicJson<CursorModelResponse>(env, deps, apiKey, "/v1/models");
 };
 
 export const resolveCursorModel = function resolveCursorModel(model: unknown):
@@ -1790,16 +1774,4 @@ export const collectCursorOutput = async function collectCursorOutput(
     }
   }
   return { text, toolCalls };
-};
-
-export const collectCursorText = async function collectCursorText(
-  response: Response
-): Promise<string> {
-  const output = await collectCursorOutput(response);
-  return output.text;
-};
-
-export const cursorTestExports = {
-  encodeCursorChatRequest,
-  parseComposerToolCalls,
 };
