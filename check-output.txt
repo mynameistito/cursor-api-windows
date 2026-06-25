@@ -1,0 +1,63 @@
+Protected by Socket Firewall
+$ ultracite check
+Checking formatting...
+
+bridge/cursor-sdk-local-agent-bridge.mjs (7ms)
+
+Format issues found in above 1 files. Run without `--check` to fix.
+Finished in 207ms on 38 files using 16 threads.
+src/bridge.ts:25:47: error promise(prefer-await-to-then): Prefer await to then()/catch()/finally() help: Use `await` with `try`/`catch` instead of promise chaining for more readable and maintainable async code.
+src/bridge.ts:26:40: error promise(prefer-await-to-then): Prefer await to then()/catch()/finally() help: Use `await` with `try`/`catch` instead of promise chaining for more readable and maintainable async code.
+src/anthropic.ts:126:36: error eslint(complexity): function `anthropicToChatBody` has a complexity of 33. Maximum allowed is 20.
+src/daemon.ts:142:9: error eslint(no-use-before-define): 'waitForDaemonStart' was used before it was defined. help: Move the declaration before any references to it, or remove the reference if it is not needed.
+src/daemon.ts:242:11: error promise(avoid-new): Avoid creating new promises help: Use `async`/`await` instead, or return an existing promise from a library function.
+src/daemon.ts:247:43: error eslint(require-await): Async function has no `await` expression. help: Consider removing the `async` keyword.
+bridge/cursor-sdk-local-agent-bridge.mjs:1346:3: error eslint(no-shadow): 'path' is already declared in the upper scope. help: Consider renaming 'path' to avoid shadowing the variable from the outer scope.
+bridge/cursor-sdk-local-agent-bridge.mjs:2:10: error eslint(no-unused-vars): Identifier 'once' is imported but never used. help: Consider removing this import.
+bridge/cursor-sdk-local-agent-bridge.mjs:7:24: error eslint(no-unused-vars): Identifier 'sleepMs' is imported but never used. help: Consider removing this import.
+bridge/cursor-sdk-local-agent-bridge.mjs:315:52: error eslint(require-await): Async function has no `await` expression. help: Consider removing the `async` keyword.
+bridge/cursor-sdk-local-agent-bridge.mjs:537:47: error promise(prefer-await-to-then): Prefer await to then()/catch()/finally() help: Use `await` with `try`/`catch` instead of promise chaining for more readable and maintainable async code.
+bridge/cursor-sdk-local-agent-bridge.mjs:537:28: error promise(prefer-await-to-then): Prefer await to then()/catch()/finally() help: Use `await` with `try`/`catch` instead of promise chaining for more readable and maintainable async code.
+bridge/cursor-sdk-local-agent-bridge.mjs:538:40: error promise(prefer-await-to-then): Prefer await to then()/catch()/finally() help: Use `await` with `try`/`catch` instead of promise chaining for more readable and maintainable async code.
+bridge/cursor-sdk-local-agent-bridge.mjs:1208:39: error eslint(complexity): function `schemaEvaluatesObjectProperty` has a complexity of 31. Maximum allowed is 20.
+bridge/cursor-sdk-local-agent-bridge.mjs:1215:3: error eslint(no-param-reassign): Assignment to function parameter 'schema'. help: Consider using a different variable to avoid unintended side effects on the parameter.
+bridge/cursor-sdk-local-agent-bridge.mjs:1262:5: error unicorn(no-lonely-if): Unexpected `if` as the only statement in a `if` block without `else`. help: Move the inner `if` test to the outer `if` test.
+bridge/cursor-sdk-local-agent-bridge.mjs:1343:33: error eslint(complexity): function `validateJsonSchemaValue` has a complexity of 164. Maximum allowed is 20.
+bridge/cursor-sdk-local-agent-bridge.mjs:1356:3: error eslint(no-param-reassign): Assignment to function parameter 'schema'. help: Consider using a different variable to avoid unintended side effects on the parameter.
+bridge/cursor-sdk-local-agent-bridge.mjs:1742:25: error eslint(no-nested-ternary): Do not nest ternary expressions. help: Refactor nested ternary expressions into if-else statements for better readability.
+bridge/cursor-sdk-local-agent-bridge.mjs:1864:47: error eslint(require-unicode-regexp): Use the 'u' flag. help: Add the 'u' flag.
+bridge/cursor-sdk-local-agent-bridge.mjs:2031:40: error eslint(complexity): function `mcpWrapperPayloadLooksComplete` has a complexity of 53. Maximum allowed is 20.
+bridge/cursor-sdk-local-agent-bridge.mjs:2262:34: error eslint(complexity): function `isForwardableSDKToolCall` has a complexity of 29. Maximum allowed is 20.
+bridge/cursor-sdk-local-agent-bridge.mjs:2468:20: error eslint(prefer-destructuring): Use Array destructuring. help: Use array destructuring rather than direct member access.
+bridge/cursor-sdk-local-agent-bridge.mjs:2478:13: error eslint(no-empty): Unexpected empty block statements help: Remove this block or add a comment inside it
+bridge/cursor-sdk-local-agent-bridge.mjs:2812:11: error eslint(no-empty): Unexpected empty block statements help: Remove this block or add a comment inside it
+bridge/cursor-sdk-local-agent-bridge.mjs:2859:26: error eslint(require-unicode-regexp): Use the 'u' flag. help: Add the 'u' flag.
+bridge/cursor-sdk-local-agent-bridge.mjs:2862:27: error eslint(complexity): async function `runLocalAgentBody` has a complexity of 35. Maximum allowed is 20.
+bridge/cursor-sdk-local-agent-bridge.mjs:2890:41: error promise(prefer-await-to-then): Prefer await to then()/catch()/finally() help: Use `await` with `try`/`catch` instead of promise chaining for more readable and maintainable async code.
+bridge/cursor-sdk-local-agent-bridge.mjs:2926:20: error promise(prefer-await-to-then): Prefer await to then()/catch()/finally() help: Use `await` with `try`/`catch` instead of promise chaining for more readable and maintainable async code.
+bridge/cursor-sdk-local-agent-bridge.mjs:2926:32: error eslint(no-empty-function): Unexpected empty function help: Consider removing this function or adding logic to it.
+bridge/cursor-sdk-local-agent-bridge.mjs:3005:35: error eslint(no-promise-executor-return): Return statement should not be used in Promise executor. help: Use `resolve()` or `reject()` instead of returning a value.
+bridge/cursor-sdk-local-agent-bridge.mjs:3005:10: error promise(avoid-new): Avoid creating new promises help: Use `async`/`await` instead, or return an existing promise from a library function.
+bridge/cursor-sdk-local-agent-bridge.mjs:3033:21: error promise(avoid-new): Avoid creating new promises help: Use `async`/`await` instead, or return an existing promise from a library function.
+bridge/cursor-sdk-local-agent-bridge.mjs:3042:30: error promise(prefer-await-to-then): Prefer await to then()/catch()/finally() help: Use `await` with `try`/`catch` instead of promise chaining for more readable and maintainable async code.
+bridge/cursor-sdk-local-agent-bridge.mjs:3042:42: error eslint(no-empty-function): Unexpected empty function help: Consider removing this function or adding logic to it.
+bridge/cursor-sdk-local-agent-bridge.mjs:3047:14: error eslint(no-await-in-loop): Unexpected `await` inside a loop. help: Collect all promises into an array and use `Promise.all()` to run them in parallel, rather than awaiting each one sequentially inside the loop.
+bridge/cursor-sdk-local-agent-bridge.mjs:3049:12: error promise(prefer-await-to-then): Prefer await to then()/catch()/finally() help: Use `await` with `try`/`catch` instead of promise chaining for more readable and maintainable async code.
+bridge/cursor-sdk-local-agent-bridge.mjs:3049:24: error eslint(no-empty-function): Unexpected empty function help: Consider removing this function or adding logic to it.
+bridge/cursor-sdk-local-agent-bridge.mjs:3058:28: error promise(prefer-await-to-then): Prefer await to then()/catch()/finally() help: Use `await` with `try`/`catch` instead of promise chaining for more readable and maintainable async code.
+bridge/cursor-sdk-local-agent-bridge.mjs:3058:40: error eslint(no-empty-function): Unexpected empty function help: Consider removing this function or adding logic to it.
+bridge/cursor-sdk-local-agent-bridge.mjs:3064:7: error eslint(no-await-in-loop): Unexpected `await` inside a loop. help: Collect all promises into an array and use `Promise.all()` to run them in parallel, rather than awaiting each one sequentially inside the loop.
+bridge/cursor-sdk-local-agent-bridge.mjs:3073:38: error eslint(require-await): Async function has no `await` expression. help: Consider removing the `async` keyword.
+bridge/cursor-sdk-local-agent-bridge.mjs:3118:23: error eslint(complexity): async function `handleRequest` has a complexity of 21. Maximum allowed is 20.
+bridge/cursor-sdk-local-agent-bridge.mjs:3194:44: error promise(prefer-await-to-callbacks): Prefer `async`/`await` to the callback pattern help: Refactor to use an `async` function with `await` instead of passing callbacks for cleaner error handling and control flow.
+bridge/cursor-sdk-local-agent-bridge.mjs:3194:38: error promise(prefer-await-to-then): Prefer await to then()/catch()/finally() help: Use `await` with `try`/`catch` instead of promise chaining for more readable and maintainable async code.
+bridge/cursor-sdk-local-agent-bridge.mjs:3385:11: error promise(avoid-new): Avoid creating new promises help: Use `async`/`await` instead, or return an existing promise from a library function.
+bridge/cursor-sdk-local-agent-bridge.mjs:3552:37: error eslint(require-await): Async function has no `await` expression. help: Consider removing the `async` keyword.
+bridge/cursor-sdk-local-agent-bridge.mjs:3556:13: error eslint(no-empty): Unexpected empty block statements help: Remove this block or add a comment inside it
+bridge/cursor-sdk-local-agent-bridge.mjs:3596:60: error eslint(require-unicode-regexp): Use the 'u' flag. help: Add the 'u' flag.
+error: script "check" exited with code 1
+
+=== Socket Firewall ===
+
+Warning: Socket Firewall did not detect any package fetch attempts
+
