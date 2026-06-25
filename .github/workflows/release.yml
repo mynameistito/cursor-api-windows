@@ -21,8 +21,6 @@ jobs:
     name: Version packages
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    outputs:
-      published: ${{ steps.changesets.outputs.published }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -35,16 +33,24 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Create release pull request or publish
+      - name: Create release pull request
         id: changesets
         uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
         with:
           version: bun run version:packages
           commit: "chore: version packages"
           title: "chore: version packages"
-          publish: bun run release:tag
+          createGithubReleases: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push release tag
+        if: |
+          steps.changesets.outputs.hasChangesets == 'false' &&
+          startsWith(github.event.head_commit.message, 'chore: version packages')
+        run: |
+          bun run release:tag
+          git push origin --tags
 
   build:
     name: Build Windows release
@@ -52,8 +58,7 @@ jobs:
     if: |
       always() && (
         startsWith(github.ref, 'refs/tags/v') ||
-        github.event_name == 'workflow_dispatch' ||
-        needs.version.outputs.published == 'true'
+        github.event_name == 'workflow_dispatch'
       )
     runs-on: windows-latest
     steps:
@@ -71,8 +76,6 @@ jobs:
 
       - name: Resolve release tag
         id: release
-        env:
-          PUBLISHED: ${{ needs.version.outputs.published }}
         run: bun run release tag --github-output
 
       - name: Install dependencies
@@ -91,7 +94,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: cursor-api-windows
-          path: dist/cursor-api-*.zip
+          path: dist/cursor-api-*-win-x64.zip
 
       - name: Attach to GitHub Release
         if: steps.release.outputs.tag != ''
