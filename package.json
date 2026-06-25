@@ -33,6 +33,7 @@
     "fix": "ultracite fix",
     "prepare": "lefthook install",
     "changeset": "changeset",
+    "changeset-add": "bun run scripts/changeset-add.ts",
     "version:packages": "changeset version",
     "release:tag": "changeset tag"
   },
