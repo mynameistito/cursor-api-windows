@@ -3,12 +3,20 @@
  * Release tooling for CI and local use.
  *
  * Usage:
+ *   bun run release ci
  *   bun run release tag [--github-output]
  *   bun run release zip [--tag v0.1.0]
  *   bun run release upload [--tag v0.1.0] [--glob dist/*.zip]
  */
 
-import { appendFileSync, globSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+  appendFileSync,
+  existsSync,
+  globSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 
 import packageJson from "@package";
@@ -247,9 +255,130 @@ const uploadRelease = async (options: {
   console.log(`Release ${releaseTag} assets uploaded.`);
 };
 
+const runCommand = (command: string, args: string[]): string =>
+  execFileSync(command, args, {
+    cwd: projectRoot,
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+
+const runInherited = (command: string, args: string[]): void => {
+  execFileSync(command, args, { cwd: projectRoot, stdio: "inherit" });
+};
+
+const expectedReleaseAsset = (version: string): string =>
+  `cursor-api-${version}-win-x64.zip`;
+
+const fetchReleaseAssetNames = (tag: string): string[] => {
+  const output = runCommand("gh", [
+    "release",
+    "view",
+    tag,
+    "--json",
+    "assets",
+    "--jq",
+    ".assets[].name",
+  ]);
+
+  return output ? output.split("\n") : [];
+};
+
+const releaseHasExpectedAsset = (tag: string, version: string): boolean => {
+  try {
+    const names = fetchReleaseAssetNames(tag);
+    return names.includes(expectedReleaseAsset(version));
+  } catch {
+    return false;
+  }
+};
+
+const escapeRegex = (value: string): string =>
+  value.replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+
+const readReleaseNotes = (version: string): string => {
+  const changelogPath = path.join(projectRoot, "CHANGELOG.md");
+
+  if (!existsSync(changelogPath)) {
+    return `Release v${version}`;
+  }
+
+  const changelog = readFileSync(changelogPath, "utf-8");
+  const sectionRegex = new RegExp(
+    `## ${escapeRegex(version)}\n([\\s\\S]*?)(?=\n## |$)`,
+    "u"
+  );
+  const match = changelog.match(sectionRegex);
+
+  return match?.[1]?.trim() || `Release v${version}`;
+};
+
+const ciRelease = async (): Promise<void> => {
+  const { version } = packageJson;
+  const tag = `v${version}`;
+  const assetName = expectedReleaseAsset(version);
+
+  if (releaseHasExpectedAsset(tag, version)) {
+    console.log(`Release ${tag} already exists with ${assetName}.`);
+    return;
+  }
+
+  runInherited("bun", ["run", "typecheck"]);
+  runInherited("bun", ["run", "build"]);
+
+  const zipPath = await zipRelease(tag);
+
+  if (!existsSync(zipPath)) {
+    throw new Error(`Missing build artifact: ${zipPath}`);
+  }
+
+  const notesPath = path.join(projectRoot, ".changeset", "RELEASE_NOTES.md");
+  writeFileSync(notesPath, readReleaseNotes(version));
+
+  const target = runCommand("git", ["rev-parse", "HEAD"]);
+
+  try {
+    runInherited("gh", [
+      "release",
+      "create",
+      tag,
+      zipPath,
+      "--title",
+      tag,
+      "--notes-file",
+      notesPath,
+      "--target",
+      target,
+    ]);
+  } catch (error) {
+    let present: string[];
+
+    try {
+      present = fetchReleaseAssetNames(tag);
+    } catch {
+      throw error;
+    }
+
+    if (!present.includes(assetName)) {
+      console.error(`Release ${tag} is missing asset: ${assetName}`);
+      process.exit(1);
+    }
+
+    console.log(`Release ${tag} already has ${assetName}.`);
+  }
+};
+
 const program = new Command("release")
   .description("Release helpers for CI and local builds")
   .showHelpAfterError();
+
+program
+  .command("ci")
+  .description(
+    "Build and publish an immutable GitHub release (skips when the zip already exists)"
+  )
+  .action(async () => {
+    await ciRelease();
+  });
 
 program
   .command("tag")
