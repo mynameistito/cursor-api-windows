@@ -1,7 +1,8 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { setTimeout } from "node:timers/promises";
 import { promisify } from "node:util";
 
 import { stopDaemon } from "./daemon";
@@ -122,6 +123,8 @@ Expand-Archive -Path '${zipPath.replaceAll("'", "''")}' -DestinationPath '${dest
   await runPowerShell(script);
 };
 
+const psQuote = (value: string): string => value.replaceAll("'", "''");
+
 const copyBundle = async function copyBundle(
   sourceDir: string,
   targetDir: string
@@ -129,10 +132,82 @@ const copyBundle = async function copyBundle(
   mkdirSync(targetDir, { recursive: true });
   const script = `
 $ProgressPreference = 'SilentlyContinue'
-Copy-Item -Path (Join-Path '${sourceDir.replaceAll("'", "''")}' '*') -Destination '${targetDir.replaceAll("'", "''")}' -Recurse -Force
+Copy-Item -Path (Join-Path '${psQuote(sourceDir)}' '*') -Destination '${psQuote(targetDir)}' -Recurse -Force
 `.trim();
   await runPowerShell(script);
 };
+
+const copyBundleExceptExe = async function copyBundleExceptExe(
+  sourceDir: string,
+  targetDir: string
+): Promise<void> {
+  mkdirSync(targetDir, { recursive: true });
+  const script = `
+$ProgressPreference = 'SilentlyContinue'
+Get-ChildItem -LiteralPath '${psQuote(sourceDir)}' | Where-Object { $_.Name -ne 'cursor-api.exe' } | ForEach-Object {
+  Copy-Item -LiteralPath $_.FullName -Destination '${psQuote(targetDir)}' -Recurse -Force
+}
+`.trim();
+  await runPowerShell(script);
+};
+
+const stageNewExecutable = async function stageNewExecutable(
+  sourceDir: string,
+  targetDir: string
+): Promise<void> {
+  const script = `
+$ProgressPreference = 'SilentlyContinue'
+Copy-Item -LiteralPath '${psQuote(path.join(sourceDir, "cursor-api.exe"))}' -Destination '${psQuote(path.join(targetDir, "cursor-api.exe.new"))}' -Force
+`.trim();
+  await runPowerShell(script);
+};
+
+const isUpdatingInstalledBinary = function isUpdatingInstalledBinary(
+  targetDir: string
+): boolean {
+  const installedExe = path.join(targetDir, "cursor-api.exe");
+  if (!existsSync(installedExe)) {
+    return false;
+  }
+  return (
+    path.resolve(process.execPath).toLowerCase() ===
+    path.resolve(installedExe).toLowerCase()
+  );
+};
+
+const finishSelfUpdateInBackground =
+  function finishSelfUpdateInBackground(options: {
+    parentPid: number;
+    targetDir: string;
+    wasRunning: boolean;
+    workDir: string;
+  }): void {
+    const installedExe = path.join(options.targetDir, "cursor-api.exe");
+    const stagedExe = path.join(options.targetDir, "cursor-api.exe.new");
+    const scriptPath = path.join(options.workDir, "finish-update.ps1");
+    const restart = options.wasRunning
+      ? `Start-Process -FilePath '${psQuote(installedExe)}' -ArgumentList 'start' -WindowStyle Hidden`
+      : "";
+
+    const script = `
+$ErrorActionPreference = 'Stop'
+Wait-Process -Id ${options.parentPid} -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 2
+if (-not (Test-Path -LiteralPath '${psQuote(stagedExe)}')) { exit 1 }
+Remove-Item -LiteralPath '${psQuote(installedExe)}' -Force
+Move-Item -LiteralPath '${psQuote(stagedExe)}' -Destination '${psQuote(installedExe)}' -Force
+Remove-Item -LiteralPath '${psQuote(options.workDir)}' -Recurse -Force -ErrorAction SilentlyContinue
+${restart}
+`.trim();
+
+    writeFileSync(scriptPath, `${script}\n`, "utf-8");
+    const child = spawn(
+      "powershell",
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath],
+      { detached: true, stdio: "ignore", windowsHide: true }
+    );
+    child.unref();
+  };
 
 export const checkForUpdate = async function checkForUpdate(): Promise<{
   current: string;
@@ -176,6 +251,7 @@ export const runUpdate = async function runUpdate(
   if (wasRunning) {
     console.log("Stopping cursor-api…");
     await stopDaemon();
+    await setTimeout(1500);
   }
   const workDir = path.join(tmpdir(), `cursor-api-update-${latest.version}`);
   const zipPath = path.join(workDir, "bundle.zip");
@@ -188,6 +264,25 @@ export const runUpdate = async function runUpdate(
   await extractZip(zipPath, extractDir);
   const targetDir = installRoot();
   console.log(`Installing to ${targetDir}…`);
+
+  if (isUpdatingInstalledBinary(targetDir)) {
+    await copyBundleExceptExe(extractDir, targetDir);
+    await stageNewExecutable(extractDir, targetDir);
+    finishSelfUpdateInBackground({
+      parentPid: process.pid,
+      targetDir,
+      wasRunning,
+      workDir,
+    });
+    console.log(
+      `cursor-api will finish updating to ${latest.version} after this command exits.`
+    );
+    if (wasRunning) {
+      console.log("The daemon will be started again automatically.");
+    }
+    return;
+  }
+
   await copyBundle(extractDir, targetDir);
   rmSync(workDir, { force: true, recursive: true });
   console.log(`cursor-api updated to ${latest.version}.`);
