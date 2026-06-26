@@ -110,13 +110,13 @@ bun run build
 
 Releases are managed with [Changesets](https://github.com/changesets/changesets):
 
-1. Add a changeset when your PR includes user-facing changes: `bun run changeset`
-2. Merge to `main` — the **Release** workflow opens a “chore: version packages” PR when changesets are pending
-3. Merge that PR — Changesets bumps `package.json`, updates `CHANGELOG.md`, pushes a `v*` tag, then a tag-triggered run builds the Windows zip and uploads it to the GitHub release
+1. Add a changeset when your PR includes user-facing changes: `bun run changeset` (or `bun run changeset-add patch "summary"` for agents)
+2. Merge to `main` — the **Release** workflow opens a `chore: version packages` PR when changesets are pending
+3. Merge that version PR — `package.json` and `CHANGELOG.md` are updated on `main`, then the Windows zip is built and uploaded to [GitHub Releases](https://github.com/mynameistito/cursor-api-cli-windows/releases)
 
 This project is not published to npm (`private: true`). Releases are GitHub-only.
 
-One workflow (`.github/workflows/release.yml`) handles versioning and Windows release builds.
+`.github/workflows/release.yml` runs changesets on Ubuntu and builds the Windows bundle on `windows-latest`. CI runs typecheck, lint, and knip on pull requests and pushes to `main`.
 
 ---
 

@@ -27,8 +27,9 @@ The release bundle is `dist/cursor-api/` (`cursor-api.exe` + `bridge/`).
 - Add `.changeset/*.md` files for user-facing changes.
 - Agents: `bun run changeset-add <patch|minor|major> "<summary>"` (writes a changeset without prompts).
 - Humans: `bun run changeset` (interactive Changesets CLI).
-- Merging to `main` triggers `.github/workflows/release.yml`: if pending changesets exist, the workflow versions, commits to `main`, tags, and builds the Windows zip in one run; otherwise it no-ops unless an untagged version needs publishing.
-- `workflow_dispatch` and `v*` tag pushes also trigger the Windows build (GitHub releases only — not npm).
+- Merging to `main` triggers `.github/workflows/release.yml`: if pending changesets exist, the **Version packages** job opens a `chore: version packages` PR via `changesets/action`.
+- Merging that version PR bumps `package.json`, updates `CHANGELOG.md`, and pushes to `main`; the **Build Windows release** job then runs `bun run ci:release` to publish the GitHub release zip.
+- If no changesets are pending, the publish job may still run to ship an untagged version when needed.
 - `scripts/release.ts` — release CLI (`tag`, `zip`, `upload`) for CI and local builds
 - Changelog lives in `CHANGELOG.md`; release notes come from Changesets.
 - Run `bun run knip` to check for unused exports and dependencies.
