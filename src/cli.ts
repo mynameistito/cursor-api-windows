@@ -193,7 +193,9 @@ const buildProgram = (): Command => {
       const settings = loadSettings();
       settings.port = parsed;
       saveSettings(settings);
-      console.log(`Port set to ${parsed}. Restart for changes to take effect.`);
+      console.log(
+        `Port set to ${parsed}. Run cursor-api start to apply the change.`
+      );
     });
 
   const configure = program

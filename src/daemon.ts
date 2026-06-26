@@ -120,30 +120,14 @@ export const getStatus = async function getStatus(): Promise<{
   };
 };
 
-const waitForDaemonStart = async (attempt = 0): Promise<void> => {
-  if (attempt >= 30) {
-    throw new Error(
-      "Timed out waiting for cursor-api to start. Check logs with: cursor-api logs"
-    );
-  }
-  await setTimeout(200);
-  const next = await getStatus();
-  if (next.running) {
-    console.log(`cursor-api started (pid ${next.pid})`);
-    console.log(`Base URL: ${next.baseUrl}`);
-    console.log(`Logs: ${runDir().replace(/\\run$/u, "\\logs")}`);
-    return;
-  }
-  await waitForDaemonStart(attempt + 1);
+const runningConfigMatches = function runningConfigMatches(
+  state: DaemonState | null,
+  port: number
+): boolean {
+  return state !== null && state.port === port;
 };
 
-export const startDaemon = async function startDaemon(): Promise<void> {
-  const status = await getStatus();
-  if (status.running) {
-    console.log(`cursor-api is already running (pid ${status.pid})`);
-    console.log(`Base URL: ${status.baseUrl}`);
-    return;
-  }
+const spawnDaemon = function spawnDaemon(port: number): void {
   ensureConfigDirs();
   const out = createLogStream("daemon");
   const err = createLogStream("daemon");
@@ -156,10 +140,15 @@ export const startDaemon = async function startDaemon(): Promise<void> {
   child.stdout?.pipe(out);
   child.stderr?.pipe(err);
   child.unref();
-  await waitForDaemonStart();
+  console.log(`cursor-api starting in background (port ${port})`);
+  console.log(`Base URL: ${baseUrl(port)}`);
+  console.log(`Logs: ${runDir().replace(/\\run$/u, "\\logs")}`);
+  console.log("Check status: cursor-api status");
 };
 
-export const stopDaemon = async function stopDaemon(): Promise<void> {
+export const stopDaemon = async function stopDaemon(options?: {
+  quiet?: boolean;
+}): Promise<void> {
   const pid = readPid();
   if (!pid) {
     console.log("cursor-api is not running");
@@ -178,7 +167,29 @@ export const stopDaemon = async function stopDaemon(): Promise<void> {
   }
   clearPid();
   clearState();
-  console.log("cursor-api stopped");
+  if (!options?.quiet) {
+    console.log("cursor-api stopped");
+  }
+};
+
+export const startDaemon = async function startDaemon(): Promise<void> {
+  const settings = loadSettings();
+  const status = await getStatus();
+  const state = readState();
+  if (status.running) {
+    if (runningConfigMatches(state, settings.port)) {
+      console.log(`cursor-api is already running (pid ${status.pid})`);
+      console.log(`Base URL: ${baseUrl(settings.port)}`);
+      return;
+    }
+    const previousPort = state?.port ?? status.port;
+    console.log(
+      `Port changed (${previousPort} -> ${settings.port}); restarting cursor-api...`
+    );
+    await stopDaemon({ quiet: true });
+    await setTimeout(500);
+  }
+  spawnDaemon(settings.port);
 };
 
 export const runDaemonForeground =
