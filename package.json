@@ -40,7 +40,6 @@
     "release": "bun run scripts/release.ts"
   },
   "dependencies": {
-    "@typescript/native-preview": "^7.0.0-dev.20260626.1",
     "commander": "^15.0.0"
   },
   "devDependencies": {
@@ -51,7 +50,7 @@
     "lefthook": "^2.1.9",
     "oxfmt": "^0.56.0",
     "oxlint": "^1.71.0",
-    "typescript": "^6.0.3",
+    "@typescript/native-preview": "^7.0.0-dev.20260626.1",
     "ultracite": "7.8.3",
     "vitest": "^4.1.9"
   },
