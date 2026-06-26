@@ -72,14 +72,28 @@ const clearState = function clearState(): void {
   }
 };
 
+/** Whether tasklist stdout indicates the given PID is running. */
+export const tasklistOutputContainsPid = function tasklistOutputContainsPid(
+  stdout: string,
+  pid: number
+): boolean {
+  const line = stdout.trim();
+  if (!line || /^INFO:/iu.test(line)) {
+    return false;
+  }
+  return new RegExp(String.raw`\b${pid}\b`, "u").test(line);
+};
+
 const isProcessAlive = async function isProcessAlive(
   pid: number
 ): Promise<boolean> {
   try {
-    await execFileAsync("tasklist", ["/FI", `PID eq ${pid}`, "/NH"], {
-      windowsHide: true,
-    });
-    return true;
+    const { stdout } = await execFileAsync(
+      "tasklist",
+      ["/FI", `PID eq ${pid}`, "/NH"],
+      { windowsHide: true }
+    );
+    return tasklistOutputContainsPid(stdout, pid);
   } catch {
     return false;
   }
@@ -120,7 +134,7 @@ export const getStatus = async function getStatus(): Promise<{
   };
 };
 
-const runningConfigMatches = function runningConfigMatches(
+export const runningConfigMatches = function runningConfigMatches(
   state: DaemonState | null,
   port: number
 ): boolean {
