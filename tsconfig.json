@@ -10,6 +10,7 @@
     "noEmit": true,
     "lib": ["ES2023"],
     "types": ["bun", "node"],
+    "ignoreDeprecations": "6.0",
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],

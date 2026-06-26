@@ -1,5 +1,13 @@
 # cursor-api-cli-windows
 
+## 0.1.4
+
+### Patch Changes
+
+- Rebuild release after dependency bumps (commander 15, TypeScript 6, knip 6)
+- Fix release workflow to tag and build only when no pending changesets remain
+- Fix TypeScript 6 typecheck failure by silencing baseUrl deprecation until paths migration
+
 ## 0.1.3
 
 ### Patch Changes
