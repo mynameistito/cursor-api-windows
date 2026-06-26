@@ -1,5 +1,13 @@
 # cursor-api-cli-windows
 
+## 0.1.6
+
+### Patch Changes
+
+- 6629b6d: Single-job release workflow with immutable GitHub releases via changesets/action
+- 1310777: Run changesets on Ubuntu to avoid Windows credential file leaks in release CI
+- 118ff51: Restart daemon on start when port changes and return immediately after spawning
+
 ## 0.1.5
 
 ### Patch Changes
