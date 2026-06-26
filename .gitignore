@@ -4,5 +4,6 @@ bridge/node_modules/
 bridge/node.exe
 *.log
 .env
+.netrc
 .DS_Store
 Thumbs.db
