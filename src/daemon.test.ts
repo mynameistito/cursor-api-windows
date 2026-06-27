@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
+import { DEFAULT_PORT } from "@/config";
 import { runningConfigMatches, tasklistOutputContainsPid } from "@/daemon";
 
 const apiKeyFingerprint = (apiKey: string): string =>
@@ -41,10 +42,10 @@ describe(runningConfigMatches, () => {
           apiKeyFingerprint: apiKeyFingerprint(apiKey),
           bridgePort: null,
           pid: 1,
-          port: 8787,
+          port: DEFAULT_PORT,
           startedAt: "2026-01-01T00:00:00.000Z",
         },
-        8787,
+        DEFAULT_PORT,
         apiKey
       )
     ).toBeTruthy();
@@ -55,12 +56,14 @@ describe(runningConfigMatches, () => {
       apiKeyFingerprint: apiKeyFingerprint(apiKey),
       bridgePort: null,
       pid: 1,
-      port: 8787,
+      port: DEFAULT_PORT,
       startedAt: "2026-01-01T00:00:00.000Z",
     };
-    expect(runningConfigMatches(null, 8787, apiKey)).toBeFalsy();
+    expect(runningConfigMatches(null, DEFAULT_PORT, apiKey)).toBeFalsy();
     expect(runningConfigMatches(state, 9000, apiKey)).toBeFalsy();
-    expect(runningConfigMatches(state, 8787, "crsr_different_key")).toBeFalsy();
-    expect(runningConfigMatches(state, 8787, apiKey)).toBeTruthy();
+    expect(
+      runningConfigMatches(state, DEFAULT_PORT, "crsr_different_key")
+    ).toBeFalsy();
+    expect(runningConfigMatches(state, DEFAULT_PORT, apiKey)).toBeTruthy();
   });
 });

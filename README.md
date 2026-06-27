@@ -2,12 +2,12 @@
 
 CLI-first Windows build of a local **OpenAI-compatible API** backed by **Cursor Composer**.
 No GUI — install from PowerShell, run `cursor-api` in the terminal, point any OpenAI client at
-`http://127.0.0.1:8787/v1`.
+`http://127.0.0.1:6903/v1`.
 
 |                  |                                                                                               |
 | ---------------- | --------------------------------------------------------------------------------------------- |
 | Repo             | [mynameistito/cursor-api-cli-windows](https://github.com/mynameistito/cursor-api-cli-windows) |
-| Default base URL | `http://127.0.0.1:8787/v1`                                                                    |
+| Default base URL | `http://127.0.0.1:6903/v1`                                                                    |
 | Models           | `composer-2.5`, `composer-2.5-fast`                                                           |
 | Stack            | TypeScript + Bun (compiled CLI) + bundled Node bridge                                         |
 

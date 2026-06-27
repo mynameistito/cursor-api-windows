@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 export const APP_NAME = "cursor-api";
-export const DEFAULT_PORT = 8787;
+export const DEFAULT_PORT = 6903;
 export const LOCAL_API_KEY_LITERAL = "cursor-local";
 
 interface Settings {

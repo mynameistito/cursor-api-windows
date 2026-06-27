@@ -68,6 +68,7 @@ import type {
 } from "@/api/openai";
 import { encodeSse } from "@/api/sse";
 import type { CursorToolCall, Deps, Env } from "@/api/types";
+import { DEFAULT_PORT } from "@/config";
 
 import {
   anthropicError,
@@ -86,8 +87,6 @@ interface ByteChunkReader {
   >;
   releaseLock: () => void;
 }
-
-const DEFAULT_PORT = 8787;
 
 const LOCAL_API_KEY_LITERAL = "cursor-local";
 

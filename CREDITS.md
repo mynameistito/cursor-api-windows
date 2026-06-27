@@ -24,7 +24,7 @@ The Windows desktop port (Tauri 2 + system tray) informed:
 - Two-process architecture (HTTP server + Node SDK bridge)
 - Bridge runtime constraints (Node required, not Bun; cannot be single-file compiled)
 - Agent configuration shapes (OpenCode, Codex, VS Code, …)
-- Default port `8787`, loopback bind `127.0.0.1`, local key literal `cursor-local`
+- Default port `6903`, loopback bind `127.0.0.1`, local key literal `cursor-local`
 
 This CLI repo is a **clean fork** — no Tauri, no WebView2, no tray UI.
 
