@@ -20,7 +20,7 @@ if (!existsSync(scriptSrc)) {
 }
 
 console.log("Installing bridge dependencies…");
-await $`npm install --omit=dev`.cwd(bridgeDir);
+await $`bun install --omit dev`.cwd(bridgeDir);
 
 const nodeExe = await (async (): Promise<string> => {
   if (
