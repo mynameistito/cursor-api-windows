@@ -3,44 +3,26 @@
   "ui": "stream",
   "tasks": {
     "build": {
-      "dependsOn": [
-        "^build",
-        "generate-routes"
-      ],
-      "outputs": [
-        "dist/**",
-        ".output/**"
-      ]
+      "dependsOn": ["^build", "generate-routes"],
+      "outputs": ["dist/**", ".output/**"]
     },
     "dev": {
-      "dependsOn": [
-        "generate-routes"
-      ],
+      "dependsOn": ["generate-routes"],
       "cache": false,
       "persistent": true
     },
     "test": {
-      "dependsOn": [
-        "^build",
-        "generate-routes"
-      ]
+      "dependsOn": ["^build", "generate-routes"]
     },
     "typecheck": {
-      "dependsOn": [
-        "^build",
-        "generate-routes"
-      ]
+      "dependsOn": ["^build", "generate-routes"]
     },
     "check": {},
     "cf-typegen": {
-      "outputs": [
-        "worker-configuration.d.ts"
-      ]
+      "outputs": ["worker-configuration.d.ts"]
     },
     "deploy": {
-      "dependsOn": [
-        "build"
-      ],
+      "dependsOn": ["build"],
       "cache": false
     },
     "knip": {},
@@ -48,15 +30,10 @@
       "cache": false
     },
     "stage:bridge": {
-      "outputs": [
-        "bridge/node.exe",
-        "bridge/node_modules/**"
-      ]
+      "outputs": ["bridge/node.exe", "bridge/node_modules/**"]
     },
     "generate-routes": {
-      "outputs": [
-        "src/routeTree.gen.ts"
-      ]
+      "outputs": ["src/routeTree.gen.ts"]
     }
   }
 }
