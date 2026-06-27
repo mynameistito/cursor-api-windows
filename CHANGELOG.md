@@ -1,5 +1,11 @@
 # cursor-api-cli-windows
 
+## 0.1.9
+
+### Patch Changes
+
+- f688a15: Fix bridge startup crash and return terminal after cursor-api start
+
 ## 0.1.8
 
 ### Patch Changes
