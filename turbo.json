@@ -3,7 +3,7 @@
   "ui": "stream",
   "tasks": {
     "build": {
-      "dependsOn": ["^build", "generate-routes"],
+      "dependsOn": ["^build", "generate-routes", "cf-typegen"],
       "outputs": ["dist/**", ".output/**"]
     },
     "dev": {
@@ -15,7 +15,7 @@
       "dependsOn": ["^build", "generate-routes"]
     },
     "typecheck": {
-      "dependsOn": ["^build", "generate-routes"]
+      "dependsOn": ["^build", "generate-routes", "cf-typegen"]
     },
     "check": {},
     "cf-typegen": {

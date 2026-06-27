@@ -51,7 +51,7 @@ export default function Header() {
             asChild
             size="sm"
             variant="outline"
-            className="hidden sm:inline-flex"
+            className="hidden sm:inline-flex md:hidden"
           >
             <a href={repoUrl} target="_blank" rel="noreferrer">
               <Github className="size-4" />

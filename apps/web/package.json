@@ -17,7 +17,7 @@
     "dev": "vite dev --port 3000",
     "generate-routes": "tsr generate",
     "build": "vite build",
-    "deploy": "bun run build && wrangler deploy",
+    "deploy": "wrangler deploy",
     "cf-typegen": "wrangler types",
     "preview": "vite preview",
     "typecheck": "tsgo --noEmit",

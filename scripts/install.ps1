@@ -8,7 +8,7 @@
   directory to your user PATH, and verifies the binary.
 
 .EXAMPLE
-  irm https://raw.githubusercontent.com/mynameistito/cursor-api-cli-windows/main/scripts/install.ps1 | iex
+  irm https://cursor-api-windows.mynameistito.com/install.ps1 | iex
 
 .EXAMPLE
   .\install.ps1 -Update
@@ -46,17 +46,30 @@ function Get-InstalledVersion {
 }
 
 function Stop-CursorApiIfRunning {
+  $exe = Join-Path $InstallDir "cursor-api.exe"
+  if (Test-Path $exe) {
+    try {
+      & $exe stop 2>&1 | ForEach-Object { Write-Info $_ }
+    } catch {
+      Write-Warn "cursor-api stop failed: $($_.Exception.Message)"
+    }
+    Start-Sleep -Seconds 1
+  }
+
   $pidFile = Join-Path $env:APPDATA "cursor-api\run\cursor-api.pid"
   if (-not (Test-Path $pidFile)) { return }
   $procId = (Get-Content $pidFile -Raw).Trim()
-  if ($procId -match '^\d+$') {
-    Write-Info "Stopping cursor-api (pid $procId)…"
-    Stop-Process -Id ([int]$procId) -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 1
-  }
-  $exe = Join-Path $InstallDir "cursor-api.exe"
-  if (Test-Path $exe) {
-    try { & $exe stop 2>$null | Out-Null } catch { }
+  if ($procId -notmatch '^\d+$') { return }
+
+  try {
+    $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$procId"
+    if ($proc -and $proc.ExecutablePath -eq $exe) {
+      Write-Info "Stopping cursor-api (pid $procId)..."
+      Stop-Process -Id ([int]$procId) -Force -ErrorAction SilentlyContinue
+      Start-Sleep -Seconds 1
+    }
+  } catch {
+    # Process already exited.
   }
 }
 
@@ -71,9 +84,11 @@ function Get-ReleaseAsset {
   }
 
   $release = Invoke-RestMethod -Uri $uri -Headers $ApiHeaders
-  $asset = $release.assets | Where-Object { $_.name -match '^cursor-api-.*-win-x64\.zip$' } | Select-Object -First 1
+  $releaseVersion = $release.tag_name -replace '^v', ''
+  $expectedName = "cursor-api-$releaseVersion-win-x64.zip"
+  $asset = $release.assets | Where-Object { $_.name -eq $expectedName } | Select-Object -First 1
   if (-not $asset) {
-    throw "No Windows x64 zip found in release $($release.tag_name)."
+    throw "Release asset $expectedName not found in release $($release.tag_name)."
   }
 
   return [PSCustomObject]@{
@@ -117,13 +132,19 @@ function Install-Release {
   if (Test-Path $tempRoot) { Remove-Item -Recurse -Force $tempRoot }
   New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 
-  Write-Info "Downloading cursor-api $VersionLabel…"
+  Write-Info "Downloading cursor-api $VersionLabel..."
   $ProgressPreference = "SilentlyContinue"
   Invoke-WebRequest -Uri $DownloadUrl -OutFile $zipPath -UseBasicParsing
 
-  Write-Info "Extracting to $InstallDir…"
+  Write-Info "Extracting to $InstallDir..."
   if (Test-Path $extractDir) { Remove-Item -Recurse -Force $extractDir }
   Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
+
+  $extractedExe = Join-Path $extractDir "cursor-api.exe"
+  if (-not (Test-Path $extractedExe)) {
+    Remove-Item -Recurse -Force $tempRoot
+    throw "Downloaded archive does not contain cursor-api.exe."
+  }
 
   if (Test-Path $InstallDir) {
     Remove-Item -Recurse -Force $InstallDir

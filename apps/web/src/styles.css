@@ -136,7 +136,7 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans);
   background-color: var(--background);
-  background:
+  background-image:
     radial-gradient(900px 460px at 50% -10%, var(--hero-a), transparent 65%),
     linear-gradient(
       180deg,
