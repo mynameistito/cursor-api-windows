@@ -35,10 +35,10 @@ export const appendLog = (channel: LogChannel, line: string): void => {
   stream.end();
 };
 
-export const createLogStream = (channel: LogChannel) => {
+/** Open a log file descriptor for child stdio (caller should close after spawn). */
+export const openLogFd = (channel: LogChannel): number => {
   ensureConfigDirs();
-  const fd = openSync(logFile(channel), "a");
-  return createWriteStream("", { fd, flags: "a" });
+  return openSync(logFile(channel), "a");
 };
 
 export const readRecentLogs = (

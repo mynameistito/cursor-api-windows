@@ -1,6 +1,12 @@
 import { spawn, execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { setTimeout } from "node:timers/promises";
 import { promisify } from "node:util";
 
@@ -15,7 +21,7 @@ import {
   stateFilePath,
 } from "@/config";
 import { readApiKey } from "@/credentials";
-import { appendLog, createLogStream } from "@/logs";
+import { appendLog, openLogFd } from "@/logs";
 import { startHttpServer } from "@/server";
 
 const execFileAsync = promisify(execFile);
@@ -153,16 +159,14 @@ export const runningConfigMatches = function runningConfigMatches(
 
 const spawnDaemon = function spawnDaemon(port: number): void {
   ensureConfigDirs();
-  const out = createLogStream("daemon");
-  const err = createLogStream("daemon");
+  const logFd = openLogFd("daemon");
   const child = spawn(process.execPath, daemonSpawnArgs(), {
     detached: true,
     env: process.env,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["ignore", logFd, logFd],
     windowsHide: true,
   });
-  child.stdout?.pipe(out);
-  child.stderr?.pipe(err);
+  closeSync(logFd);
   child.unref();
   console.log(`cursor-api starting in background (port ${port})`);
   console.log(`Base URL: ${baseUrl(port)}`);

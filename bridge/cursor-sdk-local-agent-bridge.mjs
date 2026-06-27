@@ -8,6 +8,41 @@ import { setTimeout as sleepMs } from "node:timers/promises";
 
 import { Agent } from "@cursor/sdk";
 
+const parseInteger = function parseInteger(value, fallback) {
+  const parsed = Number.parseInt(String(value || ""), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const loadEnvFile = function loadEnvFile(filePath) {
+  if (!existsSync(filePath)) {
+    return;
+  }
+  for (const line of readFileSync(filePath, "utf-8").split(/\r?\n/u)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+    const normalized = trimmed.startsWith("export ")
+      ? trimmed.slice(7).trim()
+      : trimmed;
+    const equals = normalized.indexOf("=");
+    if (equals <= 0) {
+      continue;
+    }
+    const key = normalized.slice(0, equals).trim();
+    let value = normalized.slice(equals + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    if (!process.env[key]) {
+      process.env[key] = value;
+    }
+  }
+};
+
 const scriptDir = import.meta.dirname;
 
 const repoRoot = path.resolve(scriptDir, "..");
@@ -61,17 +96,6 @@ const activeClientToolCaptures = new Map();
 const forceNextRunAgentKeys = new Set();
 
 let server = null;
-
-if (isMainModule()) {
-  installBridgeProcessHandlers();
-  if (process.argv.includes(clientMcpServerMode)) {
-    await runClientForwardingMcpServerFromEnvironment();
-  } else {
-    startServer();
-    process.on("SIGINT", () => closeAndExit(0));
-    process.on("SIGTERM", () => closeAndExit(0));
-  }
-}
 
 export {
   bridgePrompt,
@@ -4052,43 +4076,19 @@ const installBridgeProcessHandlers = function installBridgeProcessHandlers() {
   });
 };
 
-const parseInteger = function parseInteger(value, fallback) {
-  const parsed = Number.parseInt(String(value || ""), 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-};
-
-const loadEnvFile = function loadEnvFile(filePath) {
-  if (!existsSync(filePath)) {
-    return;
-  }
-  for (const line of readFileSync(filePath, "utf-8").split(/\r?\n/u)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) {
-      continue;
-    }
-    const normalized = trimmed.startsWith("export ")
-      ? trimmed.slice(7).trim()
-      : trimmed;
-    const equals = normalized.indexOf("=");
-    if (equals <= 0) {
-      continue;
-    }
-    const key = normalized.slice(0, equals).trim();
-    let value = normalized.slice(equals + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    if (!process.env[key]) {
-      process.env[key] = value;
-    }
-  }
-};
-
 const isMainModule = function isMainModule() {
   return (
     process.argv[1] && path.resolve(process.argv[1]) === import.meta.filename
   );
 };
+
+if (isMainModule()) {
+  installBridgeProcessHandlers();
+  if (process.argv.includes(clientMcpServerMode)) {
+    await runClientForwardingMcpServerFromEnvironment();
+  } else {
+    startServer();
+    process.on("SIGINT", () => closeAndExit(0));
+    process.on("SIGTERM", () => closeAndExit(0));
+  }
+}
