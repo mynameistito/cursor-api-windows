@@ -1,5 +1,11 @@
 # cursor-api-cli-windows
 
+## 0.1.10
+
+### Patch Changes
+
+- 782e027: Restructure the repository into a Turborepo monorepo with Bun workspaces. Move the Windows CLI to `apps/cli`, add a TanStack Start documentation site at `apps/web`, and update CI, Changesets, and release tooling for multi-package versioning.
+
 > Release history below covers the CLI package. From 0.1.10 onward the CLI lives in `apps/cli/` inside a Turborepo monorepo.
 
 ## 0.1.9
