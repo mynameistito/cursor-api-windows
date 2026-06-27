@@ -50,6 +50,10 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+        env:
+          TURBO_TELEMETRY_DISABLED: "1"
 
       - name: Run task
         run: bun run ${{ matrix.task }}
+        env:
+          TURBO_TELEMETRY_DISABLED: "1"
