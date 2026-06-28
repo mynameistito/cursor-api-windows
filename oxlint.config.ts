@@ -6,8 +6,5 @@ import vitest from "ultracite/oxlint/vitest";
 
 export default defineConfig({
   extends: [core, react, tanstack, vitest],
-  ignorePatterns: [
-    ...core.ignorePatterns,
-    "**/routeTree.gen.ts",
-  ],
+  ignorePatterns: [...core.ignorePatterns, "**/routeTree.gen.ts"],
 });

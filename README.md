@@ -6,7 +6,7 @@ No GUI — install from PowerShell, run `cursor-api` in the terminal, point any 
 
 |                  |                                                                                               |
 | ---------------- | --------------------------------------------------------------------------------------------- |
-| Docs             | [cursor-api-windows.mynameistito.com](https://cursor-api-windows.mynameistito.com)          |
+| Docs             | [cursor-api-windows.mynameistito.com](https://cursor-api-windows.mynameistito.com)            |
 | Repo             | [mynameistito/cursor-api-cli-windows](https://github.com/mynameistito/cursor-api-cli-windows) |
 | Default base URL | `http://127.0.0.1:6903/v1`                                                                    |
 | Models           | `composer-2.5`, `composer-2.5-fast`                                                           |
@@ -89,7 +89,7 @@ cursor-api configure agent <id>  # opencode supported in v0.1
 | Method               | Command                                                                                                     |
 | -------------------- | ----------------------------------------------------------------------------------------------------------- |
 | From the CLI         | `cursor-api update check` then `cursor-api update`                                                          |
-| PowerShell installer | `$env:CURSOR_API_INSTALL_UPDATE = "1"; irm https://cursor-api-windows.mynameistito.com/install.ps1 \| iex` |
+| PowerShell installer | `$env:CURSOR_API_INSTALL_UPDATE = "1"; irm https://cursor-api-windows.mynameistito.com/install.ps1 \| iex`  |
 | Manual               | Download the latest `.zip` from [Releases](https://github.com/mynameistito/cursor-api-cli-windows/releases) |
 
 Updates stop the background server, replace files in the install directory, and preserve your
