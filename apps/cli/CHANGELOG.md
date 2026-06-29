@@ -1,5 +1,11 @@
 # @cursor-api-windows/cli
 
+## 0.1.14
+
+### Patch Changes
+
+- ed18a45: Fix PowerShell installer parsing when streamed through irm and iex
+
 ## 0.1.13
 
 ### Patch Changes
