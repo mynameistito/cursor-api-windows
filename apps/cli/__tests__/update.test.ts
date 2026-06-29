@@ -4,7 +4,11 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { compareSemver, isUpdatingInstalledBinary } from "@/update";
+import {
+  buildFinishSelfUpdateScript,
+  compareSemver,
+  isUpdatingInstalledBinary,
+} from "@/update";
 
 describe(compareSemver, () => {
   it("orders versions numerically", () => {
@@ -55,5 +59,43 @@ describe(isUpdatingInstalledBinary, () => {
       value: path.join(tmpdir(), "cursor-api-dev.exe"),
     });
     expect(isUpdatingInstalledBinary(tempDir)).toBeFalsy();
+  });
+});
+
+describe(buildFinishSelfUpdateScript, () => {
+  it("retries the executable swap and logs failures", () => {
+    const script = buildFinishSelfUpdateScript({
+      parentPid: 1234,
+      targetDir: "C:\\Programs\\cursor-api",
+      wasRunning: true,
+      workDir: "C:\\Temp\\cursor-api-update",
+    });
+
+    expect(
+      [
+        "Wait-Process -Id 1234",
+        "$attempt -le 30",
+        "replace attempt $attempt failed",
+        "self-update: $Message",
+        "Start-Process -FilePath",
+      ].every((token) => script.includes(token))
+    ).toBeTruthy();
+    expect(script).not.toContain(
+      "Remove-Item -LiteralPath 'C:\\Temp\\cursor-api-update' -Recurse"
+    );
+    expect(script.indexOf("Start-Process -FilePath")).toBeGreaterThan(
+      script.indexOf("if (-not $installed)")
+    );
+  });
+
+  it("does not restart the daemon when it was not running", () => {
+    const script = buildFinishSelfUpdateScript({
+      parentPid: 1234,
+      targetDir: "C:\\Programs\\cursor-api",
+      wasRunning: false,
+      workDir: "C:\\Temp\\cursor-api-update",
+    });
+
+    expect(script).not.toContain("Start-Process -FilePath");
   });
 });

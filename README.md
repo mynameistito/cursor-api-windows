@@ -19,11 +19,10 @@ No GUI — install from PowerShell, run `cursor-api` in the terminal, point any 
 
 ## Install (PowerShell)
 
-Fresh install via downloaded script:
+Fresh install:
 
 ```powershell
-irm https://cursor-api-windows.mynameistito.com/install.ps1 -OutFile install.ps1
-.\install.ps1
+irm https://cursor-api-windows.mynameistito.com/install.ps1 | iex
 ```
 
 Full install steps and client setup: [cursor-api-windows.mynameistito.com/docs](https://cursor-api-windows.mynameistito.com/docs).
@@ -31,8 +30,7 @@ Full install steps and client setup: [cursor-api-windows.mynameistito.com/docs](
 Upgrade an existing install:
 
 ```powershell
-irm https://cursor-api-windows.mynameistito.com/install.ps1 -OutFile install.ps1
-.\install.ps1 -Update
+irm https://cursor-api-windows.mynameistito.com/install.ps1 | iex
 ```
 
 From a clone of this repo:
@@ -80,11 +78,11 @@ cursor-api configure agent <id>  # opencode supported in v0.1
 
 ## Updates
 
-| Method               | Command                                                                                                   |
-| -------------------- | --------------------------------------------------------------------------------------------------------- |
-| From the CLI         | `cursor-api update check` then `cursor-api update`                                                        |
-| PowerShell installer | `irm https://cursor-api-windows.mynameistito.com/install.ps1 -OutFile install.ps1; .\install.ps1 -Update` |
-| Manual               | Download the latest `.zip` from [Releases](https://github.com/mynameistito/cursor-api-windows/releases)   |
+| Method               | Command                                                                                                 |
+| -------------------- | ------------------------------------------------------------------------------------------------------- |
+| From the CLI         | `cursor-api update check` then `cursor-api update`                                                      |
+| PowerShell installer | `irm https://cursor-api-windows.mynameistito.com/install.ps1 \| iex`                                    |
+| Manual               | Download the latest `.zip` from [Releases](https://github.com/mynameistito/cursor-api-windows/releases) |
 
 Updates stop the background server, replace files in the install directory, and preserve your
 settings in `%APPDATA%\cursor-api\`.
