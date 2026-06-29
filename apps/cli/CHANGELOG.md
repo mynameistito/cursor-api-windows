@@ -1,5 +1,11 @@
 # @cursor-api-windows/cli
 
+## 0.1.15
+
+### Patch Changes
+
+- 5462239: Make streamed PowerShell installer robust to BOM-prefixed responses
+
 ## 0.1.14
 
 ### Patch Changes
