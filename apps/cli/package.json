@@ -1,6 +1,6 @@
 {
   "name": "@cursor-api-windows/cli",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "private": true,
   "description": "CLI for a local OpenAI-compatible Cursor API on Windows.",
   "keywords": [
