@@ -1,5 +1,11 @@
 # @cursor-api/web
 
+## 0.2.0
+
+### Minor Changes
+
+- f865fe6: Refresh website positioning, add Composer agent docs, and configure Cloudflare deployment
+
 ## 0.1.0
 
 ### Minor Changes
