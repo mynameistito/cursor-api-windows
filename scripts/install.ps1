@@ -1,4 +1,13 @@
 ﻿#Requires -Version 5.1
+[CmdletBinding()]
+param(
+  [string]$InstallDir = "$env:LOCALAPPDATA\Programs\cursor-api",
+  [string]$Version = "latest",
+  [switch]$Update,
+  [switch]$SkipPath,
+  [switch]$SkipUpdateCheck
+)
+
 <#
 .SYNOPSIS
   Install or update cursor-api on Windows.
@@ -13,14 +22,6 @@
 .EXAMPLE
   $env:CURSOR_API_INSTALL_UPDATE = "1"; irm https://cursor-api-windows.mynameistito.com/install.ps1 | iex
 #>
-[CmdletBinding()]
-param(
-  [string]$InstallDir = "$env:LOCALAPPDATA\Programs\cursor-api",
-  [string]$Version = "latest",
-  [switch]$Update,
-  [switch]$SkipPath,
-  [switch]$SkipUpdateCheck
-)
 
 if ($env:CURSOR_API_INSTALL_UPDATE -eq "1") { $Update = $true }
 
