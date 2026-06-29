@@ -231,16 +231,28 @@ const buildGitHubClient = (token: string, repository: string) => {
 const escapeRegex = (value: string): string =>
   value.replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 
-const readReleaseNotes = (version: string): string => {
+const normalizeNewlines = (value: string): string =>
+  value.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
+
+const readChangelog = (): string | null => {
   const changelogPath = path.join(packageRoot, "CHANGELOG.md");
 
   if (!existsSync(changelogPath)) {
+    return null;
+  }
+
+  return normalizeNewlines(readFileSync(changelogPath, "utf-8"));
+};
+
+const readReleaseNotes = (version: string): string => {
+  const changelog = readChangelog();
+
+  if (!changelog) {
     return `Release v${version}`;
   }
 
-  const changelog = readFileSync(changelogPath, "utf-8");
   const sectionRegex = new RegExp(
-    `## ${escapeRegex(version)}\n([\\s\\S]*?)(?=\n## |$)`,
+    `(?:^|\n)##\\s+${escapeRegex(version)}\\s*\n([\\s\\S]*?)(?=\n##\\s+|(?![\\s\\S]))`,
     "u"
   );
   const match = changelog.match(sectionRegex);
