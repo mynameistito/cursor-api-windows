@@ -11,7 +11,7 @@
   irm https://cursor-api-windows.mynameistito.com/install.ps1 | iex
 
 .EXAMPLE
-  .\install.ps1 -Update
+  $env:CURSOR_API_INSTALL_UPDATE = "1"; irm https://cursor-api-windows.mynameistito.com/install.ps1 | iex
 #>
 [CmdletBinding()]
 param(
@@ -166,12 +166,13 @@ if ($env:OS -notmatch "Windows") {
 }
 
 $installed = Get-InstalledVersion
+$release = $null
 if ($installed -and -not $Update -and -not $SkipUpdateCheck) {
   try {
     $latest = Get-ReleaseAsset -Tag "latest"
     if ($latest.Version -ne $installed) {
-      Write-Warn "cursor-api $installed is installed; latest is $($latest.Version)."
-      Write-Warn "Re-run with -Update to upgrade, or: cursor-api update"
+      Write-Info "Updating cursor-api $installed -> $($latest.Version)"
+      $release = $latest
     } else {
       Write-Ok "cursor-api $installed is already installed (latest)."
     }
@@ -180,9 +181,11 @@ if ($installed -and -not $Update -and -not $SkipUpdateCheck) {
   }
 }
 
-if ($Update -or -not $installed) {
+if ($Update -or -not $installed -or $release) {
   Stop-CursorApiIfRunning
-  $release = Get-ReleaseAsset -Tag $Version
+  if (-not $release) {
+    $release = Get-ReleaseAsset -Tag $Version
+  }
   Install-Release -DownloadUrl $release.DownloadUrl -VersionLabel $release.Version
   $installed = Get-InstalledVersion
 }

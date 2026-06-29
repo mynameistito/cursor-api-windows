@@ -6,6 +6,7 @@ import { setTimeout } from "node:timers/promises";
 import { promisify } from "node:util";
 
 import { stopDaemon } from "./daemon";
+import { appendLog } from "./logs";
 import { installRoot } from "./paths";
 import { GITHUB_REPO, VERSION } from "./version";
 
@@ -165,6 +166,64 @@ Copy-Item -LiteralPath '${psQuote(path.join(sourceDir, "cursor-api.exe"))}' -Des
   await runPowerShell(script);
 };
 
+export const buildFinishSelfUpdateScript =
+  function buildFinishSelfUpdateScript(options: {
+    parentPid: number;
+    targetDir: string;
+    wasRunning: boolean;
+    workDir: string;
+  }): string {
+    const installedExe = path.join(options.targetDir, "cursor-api.exe");
+    const stagedExe = path.join(options.targetDir, "cursor-api.exe.new");
+    const zipPath = path.join(options.workDir, "bundle.zip");
+    const extractDir = path.join(options.workDir, "extract");
+    const restart = options.wasRunning
+      ? `Start-Process -FilePath '${psQuote(installedExe)}' -ArgumentList 'start' -WindowStyle Hidden\nWrite-UpdateLog 'daemon restart requested'`
+      : "";
+
+    return `
+$ErrorActionPreference = 'Stop'
+function Write-UpdateLog([string] $Message) {
+  $logDir = Join-Path $env:APPDATA 'cursor-api\\logs'
+  New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+  $line = "[$((Get-Date).ToUniversalTime().ToString('o'))] self-update: $Message"
+  Add-Content -LiteralPath (Join-Path $logDir 'daemon.log') -Value $line
+}
+
+try {
+  Write-UpdateLog 'waiting for cursor-api command to exit'
+  Wait-Process -Id ${options.parentPid} -ErrorAction SilentlyContinue
+  Start-Sleep -Milliseconds 500
+
+  if (-not (Test-Path -LiteralPath '${psQuote(stagedExe)}')) {
+    throw 'staged executable was not found'
+  }
+
+  for ($attempt = 1; $attempt -le 30; $attempt += 1) {
+    try {
+      if (Test-Path -LiteralPath '${psQuote(installedExe)}') {
+        Remove-Item -LiteralPath '${psQuote(installedExe)}' -Force
+      }
+      Move-Item -LiteralPath '${psQuote(stagedExe)}' -Destination '${psQuote(installedExe)}' -Force
+      Remove-Item -LiteralPath '${psQuote(zipPath)}' -Force -ErrorAction SilentlyContinue
+      Remove-Item -LiteralPath '${psQuote(extractDir)}' -Recurse -Force -ErrorAction SilentlyContinue
+      Write-UpdateLog 'installed replacement executable'
+      ${restart}
+      exit 0
+    } catch {
+      Write-UpdateLog "replace attempt $attempt failed: $($_.Exception.Message)"
+      Start-Sleep -Milliseconds 500
+    }
+  }
+
+  throw 'timed out replacing cursor-api.exe'
+} catch {
+  Write-UpdateLog "failed: $($_.Exception.Message)"
+  exit 1
+}
+`.trim();
+  };
+
 export const isUpdatingInstalledBinary = function isUpdatingInstalledBinary(
   targetDir: string
 ): boolean {
@@ -185,25 +244,11 @@ const finishSelfUpdateInBackground =
     wasRunning: boolean;
     workDir: string;
   }): void {
-    const installedExe = path.join(options.targetDir, "cursor-api.exe");
-    const stagedExe = path.join(options.targetDir, "cursor-api.exe.new");
     const scriptPath = path.join(options.workDir, "finish-update.ps1");
-    const restart = options.wasRunning
-      ? `Start-Process -FilePath '${psQuote(installedExe)}' -ArgumentList 'start' -WindowStyle Hidden`
-      : "";
-
-    const script = `
-$ErrorActionPreference = 'Stop'
-Wait-Process -Id ${options.parentPid} -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 2
-if (-not (Test-Path -LiteralPath '${psQuote(stagedExe)}')) { exit 1 }
-Remove-Item -LiteralPath '${psQuote(installedExe)}' -Force
-Move-Item -LiteralPath '${psQuote(stagedExe)}' -Destination '${psQuote(installedExe)}' -Force
-Remove-Item -LiteralPath '${psQuote(options.workDir)}' -Recurse -Force -ErrorAction SilentlyContinue
-${restart}
-`.trim();
+    const script = buildFinishSelfUpdateScript(options);
 
     writeFileSync(scriptPath, `${script}\n`, "utf-8");
+    appendLog("daemon", `self-update finisher staged at ${scriptPath}`);
     const child = spawn(
       "powershell",
       ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath],
