@@ -336,12 +336,20 @@ const releaseHasExpectedAsset = (tag: string, version: string): boolean => {
   }
 };
 
+const updateGitHubReleaseNotes = (tag: string, version: string): void => {
+  const notesPath = path.join(monorepoRoot, ".changeset", "RELEASE_NOTES.md");
+
+  writeFileSync(notesPath, readReleaseNotes(version));
+  runInherited("gh", ["release", "edit", tag, "--notes-file", notesPath]);
+};
+
 const ciRelease = async (): Promise<void> => {
   const { version } = packageJson;
   const tag = `v${version}`;
   const assetName = expectedReleaseAsset(version);
 
   if (releaseHasExpectedAsset(tag, version)) {
+    updateGitHubReleaseNotes(tag, version);
     console.log(`Release ${tag} already exists with ${assetName}.`);
     return;
   }
