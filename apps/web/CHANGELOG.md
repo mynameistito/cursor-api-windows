@@ -1,5 +1,11 @@
 # @cursor-api-windows/web
 
+## 0.2.2
+
+### Patch Changes
+
+- 07062e4: Rename packages and release metadata to cursor-api-windows
+
 ## 0.2.1
 
 ### Patch Changes

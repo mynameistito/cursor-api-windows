@@ -1,5 +1,11 @@
 # @cursor-api-windows/cli
 
+## 0.1.12
+
+### Patch Changes
+
+- 07062e4: Rename packages and release metadata to cursor-api-windows
+
 ## 0.1.11
 
 ### Patch Changes
