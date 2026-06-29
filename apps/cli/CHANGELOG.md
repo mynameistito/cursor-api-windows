@@ -1,5 +1,11 @@
 # @cursor-api-windows/cli
 
+## 0.1.16
+
+### Patch Changes
+
+- 8a42b7e: Serve PowerShell installer without a UTF-8 BOM
+
 ## 0.1.15
 
 ### Patch Changes
