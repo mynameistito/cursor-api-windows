@@ -25,7 +25,7 @@ param(
 if ($env:CURSOR_API_INSTALL_UPDATE -eq "1") { $Update = $true }
 
 $ErrorActionPreference = "Stop"
-$Repo = "mynameistito/cursor-api-cli-windows"
+$Repo = "mynameistito/cursor-api-windows"
 $ApiHeaders = @{
   Accept        = "application/vnd.github+json"
   "User-Agent"  = "cursor-api-installer"

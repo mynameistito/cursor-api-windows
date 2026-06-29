@@ -1,4 +1,4 @@
-# cursor-api-cli-windows
+# @cursor-api-windows/cli
 
 ## 0.1.11
 

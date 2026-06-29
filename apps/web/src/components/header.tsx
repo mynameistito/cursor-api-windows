@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 
 import { ThemeToggle } from "./theme-toggle";
 
-const repoUrl = "https://github.com/mynameistito/cursor-api-cli-windows";
+const repoUrl = "https://github.com/mynameistito/cursor-api-windows";
 
 export const Header = () => (
   <header className="sticky top-0 z-50 border-b border-border bg-[var(--header-bg)] px-4 backdrop-blur-xl">

@@ -142,10 +142,13 @@ const buildGitHubClient = (token: string, repository: string) => {
     return (await response.json()) as GitHubRelease;
   };
 
-  const createRelease = async (releaseTag: string): Promise<GitHubRelease> => {
+  const createRelease = async (
+    releaseTag: string,
+    notes: string
+  ): Promise<GitHubRelease> => {
     const response = await request(`${apiBase}/releases`, {
       body: JSON.stringify({
-        generate_release_notes: true,
+        body: notes,
         make_latest: "true",
         tag_name: releaseTag,
       }),
@@ -156,6 +159,19 @@ const buildGitHubClient = (token: string, repository: string) => {
     });
 
     return (await response.json()) as GitHubRelease;
+  };
+
+  const updateReleaseNotes = async (
+    releaseId: number,
+    notes: string
+  ): Promise<void> => {
+    await request(`${apiBase}/releases/${releaseId}`, {
+      body: JSON.stringify({ body: notes }),
+      headers: {
+        "Content-Type": "application/json",
+      },
+      method: "PATCH",
+    });
   };
 
   const deleteAsset = async (assetId: number): Promise<void> => {
@@ -207,8 +223,29 @@ const buildGitHubClient = (token: string, repository: string) => {
     createRelease,
     getReleaseByTag,
     markLatest,
+    updateReleaseNotes,
     uploadAsset,
   };
+};
+
+const escapeRegex = (value: string): string =>
+  value.replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+
+const readReleaseNotes = (version: string): string => {
+  const changelogPath = path.join(packageRoot, "CHANGELOG.md");
+
+  if (!existsSync(changelogPath)) {
+    return `Release v${version}`;
+  }
+
+  const changelog = readFileSync(changelogPath, "utf-8");
+  const sectionRegex = new RegExp(
+    `## ${escapeRegex(version)}\n([\\s\\S]*?)(?=\n## |$)`,
+    "u"
+  );
+  const match = changelog.match(sectionRegex);
+
+  return match?.[1]?.trim() || `Release v${version}`;
 };
 
 const uploadRelease = async (options: {
@@ -243,12 +280,14 @@ const uploadRelease = async (options: {
 
   const github = buildGitHubClient(token, repository);
   let release = await github.getReleaseByTag(releaseTag);
+  const notes = readReleaseNotes(releaseVersionFromTag(releaseTag));
 
   if (release) {
     await github.markLatest(release.id);
+    await github.updateReleaseNotes(release.id, notes);
   } else {
     console.log(`Creating GitHub release for ${releaseTag}`);
-    release = await github.createRelease(releaseTag);
+    release = await github.createRelease(releaseTag, notes);
   }
 
   await Promise.all(files.map((file) => github.uploadAsset(release, file)));
@@ -295,26 +334,6 @@ const releaseHasExpectedAsset = (tag: string, version: string): boolean => {
   } catch {
     return false;
   }
-};
-
-const escapeRegex = (value: string): string =>
-  value.replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-
-const readReleaseNotes = (version: string): string => {
-  const changelogPath = path.join(packageRoot, "CHANGELOG.md");
-
-  if (!existsSync(changelogPath)) {
-    return `Release v${version}`;
-  }
-
-  const changelog = readFileSync(changelogPath, "utf-8");
-  const sectionRegex = new RegExp(
-    `## ${escapeRegex(version)}\n([\\s\\S]*?)(?=\n## |$)`,
-    "u"
-  );
-  const match = changelog.match(sectionRegex);
-
-  return match?.[1]?.trim() || `Release v${version}`;
 };
 
 const ciRelease = async (): Promise<void> => {

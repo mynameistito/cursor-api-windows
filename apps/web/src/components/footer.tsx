@@ -1,4 +1,4 @@
-const repoUrl = "https://github.com/mynameistito/cursor-api-cli-windows";
+const repoUrl = "https://github.com/mynameistito/cursor-api-windows";
 
 export const Footer = () => {
   const year = new Date().getFullYear();

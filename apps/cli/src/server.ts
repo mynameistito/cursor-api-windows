@@ -244,7 +244,7 @@ const healthResponse = function healthResponse(port: number): Response {
     host: HOST,
     models: [PRIMARY_MODEL, FAST_MODEL],
     ok: true,
-    service: "cursor-api-cli",
+    service: "cursor-api-windows",
   });
 };
 

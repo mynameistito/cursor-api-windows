@@ -1,5 +1,5 @@
 {
-  "name": "cursor-api-cli-windows",
+  "name": "@cursor-api-windows/cli",
   "version": "0.1.11",
   "private": true,
   "description": "CLI for a local OpenAI-compatible Cursor API on Windows.",
@@ -10,14 +10,14 @@
     "openai",
     "windows"
   ],
-  "homepage": "https://github.com/mynameistito/cursor-api-cli-windows#readme",
+  "homepage": "https://github.com/mynameistito/cursor-api-windows#readme",
   "bugs": {
-    "url": "https://github.com/mynameistito/cursor-api-cli-windows/issues"
+    "url": "https://github.com/mynameistito/cursor-api-windows/issues"
   },
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/mynameistito/cursor-api-cli-windows.git"
+    "url": "git+https://github.com/mynameistito/cursor-api-windows.git"
   },
   "bin": {
     "cursor-api": "./dist/cursor-api/cursor-api.exe"

@@ -1,12 +1,12 @@
 {
-  "name": "@cursor-api/web",
+  "name": "@cursor-api-windows/web",
   "version": "0.2.1",
   "private": true,
   "description": "Documentation site for cursor-api for Windows.",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/mynameistito/cursor-api-cli-windows.git",
+    "url": "git+https://github.com/mynameistito/cursor-api-windows.git",
     "directory": "apps/web"
   },
   "type": "module",

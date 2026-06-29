@@ -60,7 +60,7 @@ const fetchLatestRelease =
       {
         headers: {
           Accept: "application/vnd.github+json",
-          "User-Agent": "cursor-api-cli",
+          "User-Agent": "cursor-api-windows",
         },
       }
     );

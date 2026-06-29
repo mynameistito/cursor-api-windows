@@ -1,7 +1,7 @@
 {
-  "name": "cursor-api-monorepo",
+  "name": "cursor-api-windows",
   "private": true,
-  "description": "Monorepo for cursor-api CLI and documentation site.",
+  "description": "Monorepo for cursor-api for Windows and documentation site.",
   "workspaces": [
     "apps/*",
     "packages/*"
@@ -9,13 +9,13 @@
   "type": "module",
   "scripts": {
     "dev": "turbo run dev",
-    "dev:cli": "turbo run dev --filter=cursor-api-cli-windows",
-    "dev:web": "turbo run dev --filter=@cursor-api/web",
-    "deploy:web": "turbo run deploy --filter=@cursor-api/web",
-    "cf-typegen:web": "turbo run cf-typegen --filter=@cursor-api/web",
+    "dev:cli": "turbo run dev --filter=@cursor-api-windows/cli",
+    "dev:web": "turbo run dev --filter=@cursor-api-windows/web",
+    "deploy:web": "turbo run deploy --filter=@cursor-api-windows/web",
+    "cf-typegen:web": "turbo run cf-typegen --filter=@cursor-api-windows/web",
     "build": "turbo run build",
-    "build:cli": "turbo run build --filter=cursor-api-cli-windows",
-    "build:web": "turbo run build --filter=@cursor-api/web",
+    "build:cli": "turbo run build --filter=@cursor-api-windows/cli",
+    "build:web": "turbo run build --filter=@cursor-api-windows/web",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "check": "turbo run check",
@@ -29,7 +29,7 @@
     "release:tag": "changeset tag",
     "release": "bun run apps/cli/scripts/release.ts",
     "ci:release": "bun run release ci",
-    "stage:bridge": "turbo run stage:bridge --filter=cursor-api-cli-windows"
+    "stage:bridge": "turbo run stage:bridge --filter=@cursor-api-windows/cli"
   },
   "devDependencies": {
     "@changesets/cli": "^2.31.0",

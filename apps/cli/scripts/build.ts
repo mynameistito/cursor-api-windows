@@ -42,7 +42,7 @@ await Bun.write(
     "  cursor-api.exe logs -f",
     "",
     "Add this folder to PATH, or copy it to Program Files.",
-    "Docs: https://github.com/mynameistito/cursor-api-cli-windows",
+    "Docs: https://github.com/mynameistito/cursor-api-windows",
   ].join("\n")
 );
 

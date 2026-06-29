@@ -10,8 +10,8 @@ Monorepo managed with **Turborepo** and **Bun workspaces**.
 
 ```
 apps/
-  cli/          — Windows CLI (`cursor-api-cli-windows`)
-  web/          — TanStack Start docs/marketing site (`@cursor-api/web`)
+  cli/          — Windows CLI (`@cursor-api-windows/cli`)
+  web/          — TanStack Start docs/marketing site (`@cursor-api-windows/web`)
 packages/       — shared libraries (future)
 ```
 
@@ -58,7 +58,7 @@ bun run dev:web    # site on http://localhost:3000
   - Both: `bun run changeset-add both patch "summary"`
 - Humans: `bun run changeset` (interactive Changesets CLI).
 - Merging to `main` triggers `.github/workflows/release.yml`: if pending changesets exist, the **Version packages** job opens a `chore: version packages` PR via `changesets/action`.
-- Merging that version PR bumps package versions and updates per-app changelogs (`apps/cli/CHANGELOG.md`, `apps/web/CHANGELOG.md`), then pushes to `main`; the **Build Windows release** job runs `bun run ci:release` to publish the CLI GitHub release zip (`@cursor-api/web` is versioned only).
+- Merging that version PR bumps package versions and updates per-app changelogs (`apps/cli/CHANGELOG.md`, `apps/web/CHANGELOG.md`), then pushes to `main`; the **Build Windows release** job runs `bun run ci:release` to publish the CLI GitHub release zip (`@cursor-api-windows/web` is versioned only).
 - If no changesets are pending, the publish job may still run to ship an untagged version when needed.
 - `apps/cli/scripts/release.ts` — release CLI (`tag`, `zip`, `upload`) for CI and local builds
 - Changelog lives in `apps/cli/CHANGELOG.md`; release notes come from Changesets.

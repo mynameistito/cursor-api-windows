@@ -1,6 +1,6 @@
-# @cursor-api/web
+# @cursor-api-windows/web
 
-Documentation and marketing site for [cursor-api for Windows](https://github.com/mynameistito/cursor-api-cli-windows).
+Documentation and marketing site for [cursor-api for Windows](https://github.com/mynameistito/cursor-api-windows).
 
 Built with [TanStack Start](https://tanstack.com/start), React, and Tailwind CSS.
 

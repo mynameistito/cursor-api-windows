@@ -1,4 +1,4 @@
-# @cursor-api/web
+# @cursor-api-windows/web
 
 ## 0.2.1
 

@@ -21,7 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 
-const repoUrl = "https://github.com/mynameistito/cursor-api-cli-windows";
+const repoUrl = "https://github.com/mynameistito/cursor-api-windows";
 const installCommand =
   "irm https://cursor-api-windows.mynameistito.com/install.ps1 | iex";
 

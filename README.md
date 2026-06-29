@@ -1,4 +1,4 @@
-# cursor-api-cli-windows
+# cursor-api-windows
 
 CLI-first Windows build of a local **OpenAI-compatible API** backed by **Cursor Composer**.
 No GUI — install from PowerShell, run `cursor-api` in the terminal, point any OpenAI client at
@@ -7,7 +7,7 @@ No GUI — install from PowerShell, run `cursor-api` in the terminal, point any 
 |                  |                                                                                               |
 | ---------------- | --------------------------------------------------------------------------------------------- |
 | Docs             | [cursor-api-windows.mynameistito.com](https://cursor-api-windows.mynameistito.com)            |
-| Repo             | [mynameistito/cursor-api-cli-windows](https://github.com/mynameistito/cursor-api-cli-windows) |
+| Repo             | [mynameistito/cursor-api-windows](https://github.com/mynameistito/cursor-api-windows)         |
 | Default base URL | `http://127.0.0.1:6903/v1`                                                                    |
 | Models           | `composer-2.5`, `composer-2.5-fast`                                                           |
 | Stack            | TypeScript + Bun (compiled CLI) + bundled Node bridge                                         |
@@ -38,7 +38,7 @@ irm https://cursor-api-windows.mynameistito.com/install.ps1 -OutFile install.ps1
 From a clone of this repo:
 
 ```powershell
-cd cursor-api-cli-windows
+cd cursor-api-windows
 .\scripts\install.ps1
 ```
 
@@ -84,7 +84,7 @@ cursor-api configure agent <id>  # opencode supported in v0.1
 | -------------------- | ----------------------------------------------------------------------------------------------------------- |
 | From the CLI         | `cursor-api update check` then `cursor-api update`                                                          |
 | PowerShell installer | `irm https://cursor-api-windows.mynameistito.com/install.ps1 -OutFile install.ps1; .\install.ps1 -Update`   |
-| Manual               | Download the latest `.zip` from [Releases](https://github.com/mynameistito/cursor-api-cli-windows/releases) |
+| Manual               | Download the latest `.zip` from [Releases](https://github.com/mynameistito/cursor-api-windows/releases)     |
 
 Updates stop the background server, replace files in the install directory, and preserve your
 settings in `%APPDATA%\cursor-api\`.
@@ -101,8 +101,8 @@ Monorepo: **Turborepo** + Bun workspaces.
 | Site | `apps/web/` | [apps/web/README.md](apps/web/README.md) |
 
 ```powershell
-git clone https://github.com/mynameistito/cursor-api-cli-windows.git
-cd cursor-api-cli-windows
+git clone https://github.com/mynameistito/cursor-api-windows.git
+cd cursor-api-windows
 bun install
 bun run stage:bridge
 
@@ -119,9 +119,9 @@ Releases are managed with [Changesets](https://github.com/changesets/changesets)
 
 1. Add a changeset when your PR includes user-facing CLI changes: `bun run changeset` (or `bun run changeset-add patch "summary"` for agents)
 2. Merge to `main` — the **Release** workflow opens a `chore: version packages` PR when changesets are pending
-3. Merge that version PR — `apps/cli/package.json` and `apps/cli/CHANGELOG.md` are updated on `main`, then the Windows zip is built and uploaded to [GitHub Releases](https://github.com/mynameistito/cursor-api-cli-windows/releases)
+3. Merge that version PR — `apps/cli/package.json` and `apps/cli/CHANGELOG.md` are updated on `main`, then the Windows zip is built and uploaded to [GitHub Releases](https://github.com/mynameistito/cursor-api-windows/releases)
 
-Only `cursor-api-cli-windows` is released to GitHub. `@cursor-api/web` is versioned in the monorepo but not published.
+Only `@cursor-api-windows/cli` is released to GitHub. `@cursor-api-windows/web` is versioned in the monorepo but not published.
 
 This project is not published to npm (`private: true`). CLI releases are GitHub-only.
 

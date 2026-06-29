@@ -1,7 +1,7 @@
 {
   "name": "cursor-api-bridge",
   "private": true,
-  "description": "Bundled @cursor/sdk runtime for cursor-api-cli-windows.",
+  "description": "Bundled @cursor/sdk runtime for cursor-api-windows.",
   "type": "module",
   "dependencies": {
     "@cursor/sdk": "^1.0.13"

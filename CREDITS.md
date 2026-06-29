@@ -1,6 +1,6 @@
 # Credits
 
-**cursor-api-cli-windows** is an independent CLI-only project. It does not share
+**cursor-api-windows** is an independent CLI-only project. It does not share
 configuration or credentials with the GUI desktop apps.
 
 ## Upstream projects
@@ -40,7 +40,7 @@ by Cursor. This project is not affiliated with or endorsed by Cursor.
 ## This repository
 
 - **Maintainer:** [mynameistito](https://github.com/mynameistito)
-- **Repo:** [mynameistito/cursor-api-cli-windows](https://github.com/mynameistito/cursor-api-cli-windows)
+- **Repo:** [mynameistito/cursor-api-windows](https://github.com/mynameistito/cursor-api-windows)
 - **License:** MIT — see [LICENSE](LICENSE)
 
 If you use this software, please retain attribution to the upstream MIT projects

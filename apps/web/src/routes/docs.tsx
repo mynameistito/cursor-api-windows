@@ -467,7 +467,7 @@ Content-Type: application/json
 
       <section className="py-8" id="credits">
         <SectionHeading
-          description="cursor-api-cli-windows is independent and builds on prior MIT work."
+          description="cursor-api-windows is independent and builds on prior MIT work."
           title="Credits and scope"
         />
         <div className="grid gap-3 lg:grid-cols-2">

@@ -1,4 +1,4 @@
-# cursor-api-cli-windows
+# @cursor-api-windows/cli
 
 Windows CLI for a local **OpenAI-compatible API** backed by Cursor Composer.
 
