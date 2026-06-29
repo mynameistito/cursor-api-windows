@@ -169,12 +169,12 @@ $installed = Get-InstalledVersion
 $release = $null
 if ($installed -and -not $Update -and -not $SkipUpdateCheck) {
   try {
-    $latest = Get-ReleaseAsset -Tag "latest"
-    if ($latest.Version -ne $installed) {
-      Write-Info "Updating cursor-api $installed -> $($latest.Version)"
-      $release = $latest
+    $target = Get-ReleaseAsset -Tag $Version
+    if ($target.Version -ne $installed) {
+      Write-Info "Updating cursor-api $installed -> $($target.Version)"
+      $release = $target
     } else {
-      Write-Ok "cursor-api $installed is already installed (latest)."
+      Write-Ok "cursor-api $installed is already installed."
     }
   } catch {
     Write-Warn "Could not check for updates: $($_.Exception.Message)"

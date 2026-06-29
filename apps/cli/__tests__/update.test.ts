@@ -83,6 +83,9 @@ describe(buildFinishSelfUpdateScript, () => {
     expect(script).not.toContain(
       "Remove-Item -LiteralPath 'C:\\Temp\\cursor-api-update' -Recurse"
     );
+    expect(script.indexOf("Start-Process -FilePath")).toBeGreaterThan(
+      script.indexOf("if (-not $installed)")
+    );
   });
 
   it("does not restart the daemon when it was not running", () => {

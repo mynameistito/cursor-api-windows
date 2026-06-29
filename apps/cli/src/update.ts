@@ -199,24 +199,30 @@ try {
     throw 'staged executable was not found'
   }
 
+  $installed = $false
   for ($attempt = 1; $attempt -le 30; $attempt += 1) {
     try {
       if (Test-Path -LiteralPath '${psQuote(installedExe)}') {
         Remove-Item -LiteralPath '${psQuote(installedExe)}' -Force
       }
       Move-Item -LiteralPath '${psQuote(stagedExe)}' -Destination '${psQuote(installedExe)}' -Force
-      Remove-Item -LiteralPath '${psQuote(zipPath)}' -Force -ErrorAction SilentlyContinue
-      Remove-Item -LiteralPath '${psQuote(extractDir)}' -Recurse -Force -ErrorAction SilentlyContinue
-      Write-UpdateLog 'installed replacement executable'
-      ${restart}
-      exit 0
+      $installed = $true
+      break
     } catch {
       Write-UpdateLog "replace attempt $attempt failed: $($_.Exception.Message)"
       Start-Sleep -Milliseconds 500
     }
   }
 
-  throw 'timed out replacing cursor-api.exe'
+  if (-not $installed) {
+    throw 'timed out replacing cursor-api.exe'
+  }
+
+  Remove-Item -LiteralPath '${psQuote(zipPath)}' -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath '${psQuote(extractDir)}' -Recurse -Force -ErrorAction SilentlyContinue
+  Write-UpdateLog 'installed replacement executable'
+  ${restart}
+  exit 0
 } catch {
   Write-UpdateLog "failed: $($_.Exception.Message)"
   exit 1
