@@ -1,5 +1,11 @@
 # cursor-api-cli-windows
 
+## 0.1.11
+
+### Patch Changes
+
+- 6c5b43e: Improve installer update guidance and stop warnings
+
 ## 0.1.10
 
 ### Patch Changes

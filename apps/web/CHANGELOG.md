@@ -1,5 +1,11 @@
 # @cursor-api/web
 
+## 0.2.1
+
+### Patch Changes
+
+- 6c5b43e: Improve installer update guidance and stop warnings
+
 ## 0.2.0
 
 ### Minor Changes
