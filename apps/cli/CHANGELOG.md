@@ -1,5 +1,11 @@
 # @cursor-api-windows/cli
 
+## 0.1.17
+
+### Patch Changes
+
+- c5e97b9: Fix GitHub release notes to include the full changelog entry on Windows
+
 ## 0.1.16
 
 ### Patch Changes
