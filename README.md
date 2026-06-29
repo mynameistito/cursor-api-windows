@@ -4,13 +4,13 @@ CLI-first Windows build of a local **OpenAI-compatible API** backed by **Cursor 
 No GUI — install from PowerShell, run `cursor-api` in the terminal, point any OpenAI client at
 `http://127.0.0.1:6903/v1`.
 
-|                  |                                                                                               |
-| ---------------- | --------------------------------------------------------------------------------------------- |
-| Docs             | [cursor-api-windows.mynameistito.com](https://cursor-api-windows.mynameistito.com)            |
-| Repo             | [mynameistito/cursor-api-windows](https://github.com/mynameistito/cursor-api-windows)         |
-| Default base URL | `http://127.0.0.1:6903/v1`                                                                    |
-| Models           | `composer-2.5`, `composer-2.5-fast`                                                           |
-| Stack            | TypeScript + Bun (compiled CLI) + bundled Node bridge                                         |
+|                  |                                                                                       |
+| ---------------- | ------------------------------------------------------------------------------------- |
+| Docs             | [cursor-api-windows.mynameistito.com](https://cursor-api-windows.mynameistito.com)    |
+| Repo             | [mynameistito/cursor-api-windows](https://github.com/mynameistito/cursor-api-windows) |
+| Default base URL | `http://127.0.0.1:6903/v1`                                                            |
+| Models           | `composer-2.5`, `composer-2.5-fast`                                                   |
+| Stack            | TypeScript + Bun (compiled CLI) + bundled Node bridge                                 |
 
 > **Credits:** Derived from [standardagents/composer-api](https://github.com/standardagents/composer-api) (MIT).
 > See [CREDITS.md](CREDITS.md) for full attribution.
@@ -80,11 +80,11 @@ cursor-api configure agent <id>  # opencode supported in v0.1
 
 ## Updates
 
-| Method               | Command                                                                                                     |
-| -------------------- | ----------------------------------------------------------------------------------------------------------- |
-| From the CLI         | `cursor-api update check` then `cursor-api update`                                                          |
-| PowerShell installer | `irm https://cursor-api-windows.mynameistito.com/install.ps1 -OutFile install.ps1; .\install.ps1 -Update`   |
-| Manual               | Download the latest `.zip` from [Releases](https://github.com/mynameistito/cursor-api-windows/releases)     |
+| Method               | Command                                                                                                   |
+| -------------------- | --------------------------------------------------------------------------------------------------------- |
+| From the CLI         | `cursor-api update check` then `cursor-api update`                                                        |
+| PowerShell installer | `irm https://cursor-api-windows.mynameistito.com/install.ps1 -OutFile install.ps1; .\install.ps1 -Update` |
+| Manual               | Download the latest `.zip` from [Releases](https://github.com/mynameistito/cursor-api-windows/releases)   |
 
 Updates stop the background server, replace files in the install directory, and preserve your
 settings in `%APPDATA%\cursor-api\`.
