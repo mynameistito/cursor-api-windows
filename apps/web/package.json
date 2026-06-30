@@ -18,7 +18,7 @@
     "generate-routes": "tsr generate",
     "build": "vite build",
     "check": "ultracite check",
-    "deploy": "wrangler deploy",
+    "deploy": "vite build && wrangler deploy",
     "cf-typegen": "wrangler types",
     "fix": "ultracite fix",
     "preview": "vite preview",
