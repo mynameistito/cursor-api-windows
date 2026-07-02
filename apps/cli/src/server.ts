@@ -22,7 +22,6 @@
 import { once } from "node:events";
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { buffer } from "node:stream/consumers";
 
 import {
   createCursorCompletion,
@@ -37,6 +36,7 @@ import {
 } from "@/api/cursor-sdk";
 import {
   errorResponse,
+  HttpError,
   json,
   notFound,
   openAiError,
@@ -80,6 +80,9 @@ import {
 } from "./anthropic";
 
 const HOST = "127.0.0.1";
+
+// Large enough for local multimodal-sized JSON payloads, small enough to bound daemon memory use.
+export const MAX_REQUEST_BODY_BYTES = 25 * 1024 * 1024;
 
 interface ByteChunkReader {
   read: () => Promise<
@@ -164,6 +167,59 @@ const TRAILING_SLASHES_PATTERN = /\/+$/u;
 const MODEL_PATH_PATTERN = /^\/models\/(?<id>.+)$/u;
 
 const RESPONSE_PATH_PATTERN = /^\/responses\/(?<id>[^/]+)$/u;
+
+const DECIMAL_INTEGER_PATTERN = /^\d+$/u;
+
+const requestCanHaveBody = function requestCanHaveBody(
+  method: string
+): boolean {
+  const normalized = method.toUpperCase();
+  return normalized !== "GET" && normalized !== "HEAD";
+};
+
+export const contentLengthExceedsLimit = function contentLengthExceedsLimit(
+  method: string,
+  rawContentLength: string | string[] | undefined,
+  limit = MAX_REQUEST_BODY_BYTES
+): boolean {
+  if (!requestCanHaveBody(method)) {
+    return false;
+  }
+  const value = Array.isArray(rawContentLength)
+    ? rawContentLength[0]
+    : rawContentLength;
+  const trimmed = value?.trim();
+  if (!trimmed || !DECIMAL_INTEGER_PATTERN.test(trimmed)) {
+    return false;
+  }
+  return BigInt(trimmed) > BigInt(limit);
+};
+
+const requestBodyTooLargeError =
+  function requestBodyTooLargeError(): HttpError {
+    return new HttpError(
+      "Request body too large",
+      413,
+      "request_body_too_large"
+    );
+  };
+
+export const readBoundedBody = async function readBoundedBody(
+  body: AsyncIterable<Uint8Array | string>,
+  limit = MAX_REQUEST_BODY_BYTES
+): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  for await (const chunk of body) {
+    const bodyChunk = Buffer.from(chunk);
+    totalBytes += bodyChunk.byteLength;
+    if (totalBytes > limit) {
+      throw requestBodyTooLargeError();
+    }
+    chunks.push(bodyChunk);
+  }
+  return Buffer.concat(chunks, totalBytes);
+};
 
 const buildEnv = function buildEnv(): Env {
   return {
@@ -1134,15 +1190,19 @@ const toWebRequest = function toWebRequest(
     }
   }
   const init: RequestInit = { headers, method };
-  if (method !== "GET" && method !== "HEAD") {
-    const bodyPromise = buffer(req);
+  if (requestCanHaveBody(method)) {
+    const bodyPromise = readBoundedBody(req);
     init.body = new ReadableStream<Uint8Array>({
       async start(controller) {
-        const bodyBuffer = await bodyPromise;
-        if (bodyBuffer.length) {
-          controller.enqueue(new Uint8Array(bodyBuffer));
+        try {
+          const bodyBuffer = await bodyPromise;
+          if (bodyBuffer.length) {
+            controller.enqueue(new Uint8Array(bodyBuffer));
+          }
+          controller.close();
+        } catch (error) {
+          controller.error(error);
         }
-        controller.close();
       },
     });
     (
@@ -1196,6 +1256,19 @@ const handleHttpRequest = async function handleHttpRequest(
   port: number
 ): Promise<void> {
   try {
+    if (
+      contentLengthExceedsLimit(
+        req.method || "GET",
+        req.headers["content-length"]
+      )
+    ) {
+      req.resume();
+      await writeWebResponse(
+        res,
+        openAiError("Request body too large", 413, "request_body_too_large")
+      );
+      return;
+    }
     const request = toWebRequest(req, port);
     const response = await route(request, port);
     await writeWebResponse(res, response);
