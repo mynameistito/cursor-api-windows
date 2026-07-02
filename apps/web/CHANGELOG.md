@@ -1,5 +1,12 @@
 # @cursor-api-windows/web
 
+## 0.2.4
+
+### Patch Changes
+
+- d7bd1e8: Add website Open Graph card and fix VS Code icon
+- db68106: Refresh the web homepage with expanded agent setup guidance
+
 ## 0.2.3
 
 ### Patch Changes
