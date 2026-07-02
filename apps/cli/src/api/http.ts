@@ -2,14 +2,6 @@ const JSON_HEADERS = {
   "content-type": "application/json; charset=utf-8",
 };
 
-const CORS_HEADERS = {
-  "access-control-allow-headers":
-    "authorization,content-type,x-api-key,idempotency-key,x-session-affinity,x-opencode-session-id,x-opencode-session",
-  "access-control-allow-methods": "GET,POST,OPTIONS",
-  "access-control-allow-origin": "*",
-  "access-control-max-age": "86400",
-};
-
 export class HttpError extends Error {
   readonly status: number;
   readonly code: string;
@@ -29,28 +21,14 @@ export class HttpError extends Error {
   }
 }
 
-const withCors = (response: Response): Response => {
-  const headers = new Headers(response.headers);
-  for (const [key, value] of Object.entries(CORS_HEADERS)) {
-    headers.set(key, value);
-  }
-  return new Response(response.body, {
-    headers,
-    status: response.status,
-    statusText: response.statusText,
-  });
-};
-
 export const json = (data: unknown, init: ResponseInit = {}): Response =>
-  withCors(
-    Response.json(data, {
-      ...init,
-      headers: {
-        ...JSON_HEADERS,
-        ...init.headers,
-      },
-    })
-  );
+  Response.json(data, {
+    ...init,
+    headers: {
+      ...JSON_HEADERS,
+      ...init.headers,
+    },
+  });
 
 export const openAiError = (
   message: string,
@@ -86,13 +64,11 @@ export const errorResponse = (error: unknown): Response => {
 };
 
 export const sseResponse = (readable: ReadableStream<Uint8Array>): Response =>
-  withCors(
-    new Response(readable, {
-      headers: {
-        "cache-control": "no-cache, no-transform",
-        connection: "keep-alive",
-        "content-type": "text/event-stream; charset=utf-8",
-        "x-accel-buffering": "no",
-      },
-    })
-  );
+  new Response(readable, {
+    headers: {
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive",
+      "content-type": "text/event-stream; charset=utf-8",
+      "x-accel-buffering": "no",
+    },
+  });
