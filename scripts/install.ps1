@@ -85,17 +85,48 @@ function Get-ReleaseAsset {
   $release = Invoke-RestMethod -Uri $uri -Headers $ApiHeaders
   $releaseVersion = $release.tag_name -replace '^v', ''
   $expectedName = "cursor-api-$releaseVersion-win-x64.zip"
+  $expectedChecksumName = "$expectedName.sha256"
   $asset = $release.assets | Where-Object { $_.name -eq $expectedName } | Select-Object -First 1
   if (-not $asset) {
     throw "Release asset $expectedName not found in release $($release.tag_name)."
   }
+  $checksumAsset = $release.assets | Where-Object { $_.name -eq $expectedChecksumName } | Select-Object -First 1
+  if (-not $checksumAsset) {
+    throw "Release checksum asset $expectedChecksumName not found in release $($release.tag_name)."
+  }
 
   return [PSCustomObject]@{
-    Version     = ($release.tag_name -replace '^v', '')
-    Tag         = $release.tag_name
-    DownloadUrl = $asset.browser_download_url
-    Notes       = $release.body
-    PublishedAt = $release.published_at
+    Version      = ($release.tag_name -replace '^v', '')
+    Tag          = $release.tag_name
+    DownloadUrl  = $asset.browser_download_url
+    ChecksumUrl  = $checksumAsset.browser_download_url
+    Notes        = $release.body
+    PublishedAt  = $release.published_at
+  }
+}
+
+function Get-ExpectedChecksum {
+  param([string]$ChecksumPath)
+
+  $content = (Get-Content -Raw -LiteralPath $ChecksumPath).Trim()
+  $match = [regex]::Match($content, '^(?<hash>[a-fA-F0-9]{64})(?:\s+.+)?$')
+  if (-not $match.Success) {
+    throw "Release checksum asset is malformed."
+  }
+
+  return $match.Groups['hash'].Value.ToLowerInvariant()
+}
+
+function Verify-ReleaseChecksum {
+  param(
+    [string]$ZipPath,
+    [string]$ChecksumPath
+  )
+
+  $expectedHash = Get-ExpectedChecksum -ChecksumPath $ChecksumPath
+  $actualHash = (Get-FileHash -LiteralPath $ZipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+  if ($actualHash -ne $expectedHash) {
+    throw "Downloaded release checksum mismatch."
   }
 }
 
@@ -121,11 +152,13 @@ function Ensure-UserPath {
 function Install-Release {
   param(
     [string]$DownloadUrl,
+    [string]$ChecksumUrl,
     [string]$VersionLabel
   )
 
   $tempRoot = Join-Path $env:TEMP "cursor-api-install-$VersionLabel"
   $zipPath = Join-Path $tempRoot "bundle.zip"
+  $checksumPath = Join-Path $tempRoot "bundle.zip.sha256"
   $extractDir = Join-Path $tempRoot "extract"
 
   if (Test-Path $tempRoot) { Remove-Item -Recurse -Force $tempRoot }
@@ -134,6 +167,10 @@ function Install-Release {
   Write-Info "Downloading cursor-api $VersionLabel..."
   $ProgressPreference = "SilentlyContinue"
   Invoke-WebRequest -Uri $DownloadUrl -OutFile $zipPath -UseBasicParsing
+  Invoke-WebRequest -Uri $ChecksumUrl -OutFile $checksumPath -UseBasicParsing
+
+  Write-Info "Verifying release checksum..."
+  Verify-ReleaseChecksum -ZipPath $zipPath -ChecksumPath $checksumPath
 
   Write-Info "Extracting to $InstallDir..."
   if (Test-Path $extractDir) { Remove-Item -Recurse -Force $extractDir }
@@ -181,7 +218,7 @@ if ($Update -or -not $installed -or $release) {
   if (-not $release) {
     $release = Get-ReleaseAsset -Tag $Version
   }
-  Install-Release -DownloadUrl $release.DownloadUrl -VersionLabel $release.Version
+  Install-Release -DownloadUrl $release.DownloadUrl -ChecksumUrl $release.ChecksumUrl -VersionLabel $release.Version
   $installed = Get-InstalledVersion
 }
 
