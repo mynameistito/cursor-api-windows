@@ -15,6 +15,7 @@ import {
   configureOpencodeFile,
   resolveOpencodeConfigPath,
 } from "@/agents/index";
+import { LOCAL_API_KEY_LITERAL } from "@/config";
 
 describe(resolveOpencodeConfigPath, () => {
   let tempDir: string | undefined;
@@ -90,7 +91,7 @@ describe(configureOpencodeFile, () => {
       provider: {
         cursorapi: {
           options: {
-            apiKey: "cursor-local",
+            apiKey: LOCAL_API_KEY_LITERAL,
             baseURL: "http://127.0.0.1:6903/v1",
           },
         },
@@ -112,6 +113,7 @@ describe(configureOpencodeFile, () => {
       provider: {
         cursorapi: {
           options: {
+            apiKey: LOCAL_API_KEY_LITERAL,
             baseURL: "http://127.0.0.1:6903/v1",
           },
         },
@@ -135,6 +137,7 @@ describe(configureOpencodeFile, () => {
       provider: {
         cursorapi: {
           options: {
+            apiKey: LOCAL_API_KEY_LITERAL,
             baseURL: "http://127.0.0.1:6903/v1",
           },
         },

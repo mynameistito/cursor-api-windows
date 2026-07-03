@@ -68,7 +68,7 @@ import type {
 } from "@/api/openai";
 import { encodeSse } from "@/api/sse";
 import type { CursorToolCall, Deps, Env } from "@/api/types";
-import { DEFAULT_PORT } from "@/config";
+import { DEFAULT_PORT, LOCAL_API_KEY_LITERAL } from "@/config";
 
 import {
   anthropicError,
@@ -87,8 +87,6 @@ interface ByteChunkReader {
   >;
   releaseLock: () => void;
 }
-
-const LOCAL_API_KEY_LITERAL = "cursor-local";
 
 const PRIMARY_MODEL = "composer-2.5";
 
@@ -225,17 +223,16 @@ const storeResponse = function storeResponse(
 
 const resolveApiKey = function resolveApiKey(request: Request): string {
   // Anthropic clients (Claude Code) send the key as `x-api-key`; OpenAI clients use
-  // `Authorization: Bearer`. Either source, with `cursor-local`/empty falling back to the
-  // env key (Credential Manager).
+  // `Authorization: Bearer`. The local placeholder unlocks the stored Cursor key.
   const apiKeyHeader = (request.headers.get("x-api-key") || "").trim();
   const authorization = request.headers.get("authorization") || "";
   const match = BEARER_TOKEN_PATTERN.exec(authorization.trim());
   const bearer = match?.groups?.token?.trim() ?? "";
   const candidate = apiKeyHeader || bearer;
-  if (candidate && candidate !== LOCAL_API_KEY_LITERAL) {
-    return candidate;
+  if (candidate === LOCAL_API_KEY_LITERAL) {
+    return (process.env.CURSOR_API_KEY || "").trim();
   }
-  return (process.env.CURSOR_API_KEY || "").trim();
+  return candidate;
 };
 
 const healthResponse = function healthResponse(port: number): Response {
@@ -1095,11 +1092,6 @@ const route = async function route(
 ): Promise<Response> {
   if (request.method === "OPTIONS") {
     return new Response(null, {
-      headers: {
-        "access-control-allow-headers": "authorization,content-type,x-api-key",
-        "access-control-allow-methods": "GET,POST,DELETE,OPTIONS",
-        "access-control-allow-origin": "*",
-      },
       status: 204,
     });
   }
