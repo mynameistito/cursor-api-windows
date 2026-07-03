@@ -1,5 +1,12 @@
 # @cursor-api-windows/cli
 
+## 0.1.18
+
+### Patch Changes
+
+- e99e010: Restrict browser CORS access to the local API
+- 76c239e: Reject oversized local API request bodies
+
 ## 0.1.17
 
 ### Patch Changes
