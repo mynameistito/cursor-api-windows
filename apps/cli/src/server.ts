@@ -22,6 +22,7 @@
 import { once } from "node:events";
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 
 import {
   createCursorCompletion,
@@ -277,7 +278,7 @@ const storeResponse = function storeResponse(
   }
 };
 
-const resolveApiKey = function resolveApiKey(request: Request): string {
+export const resolveApiKey = function resolveApiKey(request: Request): string {
   // Anthropic clients (Claude Code) send the key as `x-api-key`; OpenAI clients use
   // `Authorization: Bearer`. The local placeholder unlocks the stored Cursor key.
   const apiKeyHeader = (request.headers.get("x-api-key") || "").trim();
@@ -1298,17 +1299,20 @@ const parsePort = function parsePort(raw = process.env.PORT): number {
 export const startHttpServer = async function startHttpServer(
   port = parsePort()
 ): Promise<HttpServerHandle> {
+  let boundPort = port;
   const server = createServer((req, res) => {
-    void handleHttpRequest(req, res, port);
+    void handleHttpRequest(req, res, boundPort);
   });
   server.listen(port, HOST);
   await once(server, "listening");
+  const address = server.address() as AddressInfo | null;
+  boundPort = address?.port ?? port;
   return {
     close: async () => {
       const closed = once(server, "close");
       server.close();
       await closed;
     },
-    port,
+    port: boundPort,
   };
 };
