@@ -1,5 +1,12 @@
 import { execFile, spawn } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout } from "node:timers/promises";
@@ -16,6 +23,7 @@ interface ReleaseInfo {
   version: string;
   tag: string;
   downloadUrl: string;
+  checksumUrl: string;
   publishedAt: string;
   releaseNotes: string;
 }
@@ -54,6 +62,35 @@ export const compareSemver = function compareSemver(
   return 0;
 };
 
+export const parseChecksumFile = function parseChecksumFile(
+  value: string
+): string {
+  const trimmed = value.trim();
+  const match = /^(?<hash>[a-fA-F0-9]{64})(?:\s+.+)?$/u.exec(trimmed);
+  const hash = match?.groups?.hash;
+
+  if (!hash) {
+    throw new Error("Release checksum asset is malformed.");
+  }
+
+  return hash.toLowerCase();
+};
+
+const computeFileSha256 = (filePath: string): string =>
+  createHash("sha256").update(readFileSync(filePath)).digest("hex");
+
+export const verifyReleaseChecksum = function verifyReleaseChecksum(options: {
+  checksumText: string;
+  zipPath: string;
+}): void {
+  const expectedHash = parseChecksumFile(options.checksumText);
+  const actualHash = computeFileSha256(options.zipPath);
+
+  if (actualHash !== expectedHash) {
+    throw new Error("Downloaded release checksum mismatch.");
+  }
+};
+
 const fetchLatestRelease =
   async function fetchLatestRelease(): Promise<ReleaseInfo | null> {
     const res = await fetch(
@@ -79,7 +116,19 @@ const fetchLatestRelease =
     if (!asset) {
       throw new Error("Latest release has no Windows x64 zip asset.");
     }
+
+    const checksumAsset = data.assets.find(
+      (item) => item.name === `${asset.name}.sha256`
+    );
+
+    if (!checksumAsset) {
+      throw new Error(
+        "Latest release has no checksum asset for Windows x64 zip."
+      );
+    }
+
     return {
+      checksumUrl: checksumAsset.browser_download_url,
       downloadUrl: asset.browser_download_url,
       publishedAt: data.published_at,
       releaseNotes: data.body || "",
@@ -309,11 +358,18 @@ export const runUpdate = async function runUpdate(
   }
   const workDir = path.join(tmpdir(), `cursor-api-update-${latest.version}`);
   const zipPath = path.join(workDir, "bundle.zip");
+  const checksumPath = path.join(workDir, "bundle.zip.sha256");
   const extractDir = path.join(workDir, "extract");
   rmSync(workDir, { force: true, recursive: true });
   mkdirSync(workDir, { recursive: true });
   console.log("Downloading release…");
   await downloadFile(latest.downloadUrl, zipPath);
+  await downloadFile(latest.checksumUrl, checksumPath);
+  console.log("Verifying release checksum…");
+  verifyReleaseChecksum({
+    checksumText: readFileSync(checksumPath, "utf-8"),
+    zipPath,
+  });
   console.log("Extracting…");
   await extractZip(zipPath, extractDir);
   const targetDir = installRoot();

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -8,7 +9,12 @@ import {
   buildFinishSelfUpdateScript,
   compareSemver,
   isUpdatingInstalledBinary,
+  parseChecksumFile,
+  verifyReleaseChecksum,
 } from "@/update";
+
+const sha256Hex = (value: string): string =>
+  createHash("sha256").update(value).digest("hex");
 
 describe(compareSemver, () => {
   it("orders versions numerically", () => {
@@ -59,6 +65,60 @@ describe(isUpdatingInstalledBinary, () => {
       value: path.join(tmpdir(), "cursor-api-dev.exe"),
     });
     expect(isUpdatingInstalledBinary(tempDir)).toBeFalsy();
+  });
+});
+
+describe(parseChecksumFile, () => {
+  it("parses a plain SHA-256 hash", () => {
+    const hash = sha256Hex("release zip");
+
+    expect(parseChecksumFile(` ${hash}\n`)).toBe(hash);
+  });
+
+  it("parses a SHA-256 hash followed by a filename", () => {
+    const hash = sha256Hex("release zip");
+
+    expect(parseChecksumFile(`${hash}  cursor-api-1.2.3-win-x64.zip\n`)).toBe(
+      hash
+    );
+  });
+
+  it("rejects malformed checksum content", () => {
+    expect(() => parseChecksumFile("not-a-checksum")).toThrow(
+      "Release checksum asset is malformed."
+    );
+  });
+});
+
+describe(verifyReleaseChecksum, () => {
+  let tempDir: string | undefined;
+
+  afterEach(() => {
+    if (tempDir) {
+      rmSync(tempDir, { force: true, recursive: true });
+      tempDir = undefined;
+    }
+  });
+
+  it("accepts a zip with the expected checksum", () => {
+    tempDir = mkdtempSync(path.join(tmpdir(), "cursor-api-checksum-"));
+    const zipPath = path.join(tempDir, "bundle.zip");
+    const content = "release zip";
+    writeFileSync(zipPath, content);
+
+    expect(() =>
+      verifyReleaseChecksum({ checksumText: sha256Hex(content), zipPath })
+    ).not.toThrow();
+  });
+
+  it("rejects a zip before extraction when the checksum mismatches", () => {
+    tempDir = mkdtempSync(path.join(tmpdir(), "cursor-api-checksum-"));
+    const zipPath = path.join(tempDir, "bundle.zip");
+    writeFileSync(zipPath, "tampered release zip");
+
+    expect(() =>
+      verifyReleaseChecksum({ checksumText: sha256Hex("release zip"), zipPath })
+    ).toThrow("Downloaded release checksum mismatch.");
   });
 });
 

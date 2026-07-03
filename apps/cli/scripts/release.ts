@@ -10,6 +10,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   appendFileSync,
   existsSync,
@@ -62,6 +63,21 @@ const resolveReleaseTag = (published?: boolean): string => {
 const releaseVersionFromTag = (tag: string): string =>
   tag.replace(/^v/u, "") || "0.0.0-dev";
 
+const checksumPathForZip = (zipPath: string): string => `${zipPath}.sha256`;
+
+const computeFileSha256 = (filePath: string): string =>
+  createHash("sha256").update(readFileSync(filePath)).digest("hex");
+
+const writeChecksumAsset = (zipPath: string): string => {
+  const checksumPath = checksumPathForZip(zipPath);
+  const checksum = computeFileSha256(zipPath);
+
+  writeFileSync(checksumPath, `${checksum}  ${path.basename(zipPath)}\n`);
+  console.log(`Checksum: ${checksumPath}`);
+
+  return checksumPath;
+};
+
 const writeReleaseTagOutput = (published?: boolean): string => {
   const tag = resolveReleaseTag(published);
   const outputPath = process.env.GITHUB_OUTPUT;
@@ -83,6 +99,9 @@ const zipRelease = async (tag?: string): Promise<string> => {
   const bundleGlob = path.join(bundleDir, "*");
 
   await $`powershell -NoProfile -Command Compress-Archive -Path ${bundleGlob} -DestinationPath ${zipPath} -Force`;
+
+  // Publish cursor-api-<version>-win-x64.zip.sha256 next to each zip.
+  writeChecksumAsset(zipPath);
 
   console.log(`Zipped: ${zipPath}`);
   return zipPath;
@@ -211,7 +230,9 @@ const buildGitHubClient = (token: string, repository: string) => {
       body,
       headers: {
         "Content-Length": String(body.byteLength),
-        "Content-Type": "application/zip",
+        "Content-Type": name.endsWith(".sha256")
+          ? "text/plain; charset=utf-8"
+          : "application/zip",
       },
       method: "POST",
     });
@@ -290,6 +311,8 @@ const uploadRelease = async (options: {
     throw new Error(`No release files matched: ${fileGlob}`);
   }
 
+  const uploadFiles = files.flatMap((file) => [file, writeChecksumAsset(file)]);
+
   const github = buildGitHubClient(token, repository);
   let release = await github.getReleaseByTag(releaseTag);
   const notes = readReleaseNotes(releaseVersionFromTag(releaseTag));
@@ -302,7 +325,9 @@ const uploadRelease = async (options: {
     release = await github.createRelease(releaseTag, notes);
   }
 
-  await Promise.all(files.map((file) => github.uploadAsset(release, file)));
+  await Promise.all(
+    uploadFiles.map((file) => github.uploadAsset(release, file))
+  );
 
   console.log(`Release ${releaseTag} assets uploaded.`);
 };
@@ -325,6 +350,9 @@ const runInherited = (
 const expectedReleaseAsset = (version: string): string =>
   `cursor-api-${version}-win-x64.zip`;
 
+const expectedChecksumAsset = (version: string): string =>
+  `${expectedReleaseAsset(version)}.sha256`;
+
 const fetchReleaseAssetNames = (tag: string): string[] => {
   const output = runCommand("gh", [
     "release",
@@ -342,7 +370,10 @@ const fetchReleaseAssetNames = (tag: string): string[] => {
 const releaseHasExpectedAsset = (tag: string, version: string): boolean => {
   try {
     const names = fetchReleaseAssetNames(tag);
-    return names.includes(expectedReleaseAsset(version));
+    return (
+      names.includes(expectedReleaseAsset(version)) &&
+      names.includes(expectedChecksumAsset(version))
+    );
   } catch {
     return false;
   }
@@ -359,10 +390,13 @@ const ciRelease = async (): Promise<void> => {
   const { version } = packageJson;
   const tag = `v${version}`;
   const assetName = expectedReleaseAsset(version);
+  const checksumAssetName = expectedChecksumAsset(version);
 
   if (releaseHasExpectedAsset(tag, version)) {
     updateGitHubReleaseNotes(tag, version);
-    console.log(`Release ${tag} already exists with ${assetName}.`);
+    console.log(
+      `Release ${tag} already exists with ${assetName} and ${checksumAssetName}.`
+    );
     return;
   }
 
@@ -370,9 +404,14 @@ const ciRelease = async (): Promise<void> => {
   runInherited("bun", ["run", "build:cli"], monorepoRoot);
 
   const zipPath = await zipRelease(tag);
+  const checksumPath = checksumPathForZip(zipPath);
 
   if (!existsSync(zipPath)) {
     throw new Error(`Missing build artifact: ${zipPath}`);
+  }
+
+  if (!existsSync(checksumPath)) {
+    throw new Error(`Missing checksum artifact: ${checksumPath}`);
   }
 
   const notesPath = path.join(monorepoRoot, ".changeset", "RELEASE_NOTES.md");
@@ -386,6 +425,7 @@ const ciRelease = async (): Promise<void> => {
       "create",
       tag,
       zipPath,
+      checksumPath,
       "--title",
       tag,
       "--notes-file",
@@ -407,7 +447,24 @@ const ciRelease = async (): Promise<void> => {
       process.exit(1);
     }
 
-    console.log(`Release ${tag} already has ${assetName}.`);
+    if (!present.includes(checksumAssetName)) {
+      runInherited("gh", [
+        "release",
+        "upload",
+        tag,
+        zipPath,
+        checksumPath,
+        "--clobber",
+      ]);
+      console.log(
+        `Uploaded ${assetName} and ${checksumAssetName} to existing release ${tag}.`
+      );
+      return;
+    }
+
+    console.log(
+      `Release ${tag} already has ${assetName} and ${checksumAssetName}.`
+    );
   }
 };
 
