@@ -1,5 +1,32 @@
 import "./cloudflare.d.ts";
 
+/** JSON-compatible values accepted by the API. */
+export type JsonValue =
+  | boolean
+  | null
+  | number
+  | string
+  | JsonValue[]
+  | JsonObject;
+
+/** A JSON object whose values are JSON-compatible. */
+export interface JsonObject {
+  [key: string]: JsonValue;
+}
+
+/** Values accepted as Cursor tool arguments, including nested objects. */
+type CursorToolArgumentValue =
+  | JsonValue
+  | undefined
+  | CursorToolArgumentValue[]
+  | { [key: string]: CursorToolArgumentValue };
+
+/** A map of argument names to Cursor tool argument values. */
+interface CursorToolArguments {
+  [key: string]: CursorToolArgumentValue;
+}
+
+/** Runtime bindings available to the API application. */
 export interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
@@ -22,12 +49,14 @@ export interface Env {
   WAITLIST_SOURCE?: string;
 }
 
+/** Injectable runtime dependencies used by the API. */
 export interface Deps {
   fetch: typeof fetch;
   now: () => Date;
   randomUUID: () => `${string}-${string}-${string}-${string}-${string}`;
 }
 
+/** Parsed identity information returned by Cursor. */
 export interface CursorMe {
   apiKeyName: string;
   userId?: number;
@@ -37,6 +66,7 @@ export interface CursorMe {
   createdAt: string;
 }
 
+/** An image supplied to a Cursor prompt as a URL or encoded data. */
 export type CursorImage =
   | {
       url: string;
@@ -50,17 +80,20 @@ export type CursorImage =
       uuid?: string;
     };
 
+/** The text, images, and mode sent to Cursor. */
 export interface CursorPrompt {
   text: string;
   images?: CursorImage[];
   mode?: "ask" | "agent";
 }
 
+/** A tool invocation parsed from Cursor output. */
 export interface CursorToolCall {
   name: string;
-  arguments: Record<string, unknown>;
+  arguments: CursorToolArguments;
 }
 
+/** The identifiers and stream returned for a Cursor completion. */
 export interface CursorCompletion {
   requestId: string;
   conversationId: string;

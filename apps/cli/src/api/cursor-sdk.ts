@@ -43,10 +43,17 @@ interface ClientToolSpec {
 
 type ToolCallDecision = boolean | string;
 
+type ToolArguments = CursorToolCall["arguments"];
+
 interface ProtobufField {
   no: number;
   wt: number;
   value: number | Uint8Array;
+}
+
+interface VarintRead {
+  value: number;
+  offset: number;
 }
 
 type LocalSdkDecodedEvent =
@@ -71,6 +78,15 @@ type LocalSdkDecodedEvent =
       type: "ignore";
     };
 
+interface LocalSdkStreamState {
+  emittedToolCallIds: Set<string>;
+  text: string;
+  toolCalls: CursorToolCall[];
+  uploadOpen: boolean;
+  uploadWriter: WritableStreamDefaultWriter<Uint8Array>;
+  stop: boolean;
+}
+
 type ArgsKind =
   | "delete"
   | "edit"
@@ -88,6 +104,27 @@ type ArgsKind =
 interface ToolSpec {
   name: string;
   argsKind: ArgsKind;
+}
+
+interface ToolSpecMap {
+  [toolId: number]: ToolSpec;
+}
+
+type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+interface JsonObject {
+  [key: string]: JsonValue;
+}
+
+interface ParsedBridgeError {
+  message?: string;
+  code?: string;
 }
 
 const sdkSessions = new Map<string, CursorSdkSession>();
@@ -109,10 +146,6 @@ const TRAILING_SLASH_PATTERN = /\/$/u;
 const ABSOLUTE_URL_PATTERN = /^https?:\/\//u;
 
 const SDK_TOOL_RETRY_ATTEMPTS = 3;
-
-const ignoreError = function ignoreError() {
-  void 0;
-};
 
 const mapSdkBridgeHttpStatus = function mapSdkBridgeHttpStatus(
   responseStatus: number
@@ -144,7 +177,7 @@ const mapCursorSdkHttpStatus = function mapCursorSdkHttpStatus(
   return 400;
 };
 
-const TOOL_CALL_SPECS: Record<number, ToolSpec> = {
+const TOOL_CALL_SPECS: ToolSpecMap = {
   1: { argsKind: "shell", name: "shell" },
   12: { argsKind: "edit", name: "edit" },
   13: { argsKind: "ls", name: "ls" },
@@ -157,7 +190,7 @@ const TOOL_CALL_SPECS: Record<number, ToolSpec> = {
   8: { argsKind: "readTool", name: "read" },
 };
 
-const EXEC_TOOL_SPECS: Record<number, ToolSpec> = {
+const EXEC_TOOL_SPECS: ToolSpecMap = {
   11: { argsKind: "mcp", name: "mcp" },
   14: { argsKind: "shell", name: "shell" },
   2: { argsKind: "shell", name: "shell" },
@@ -186,10 +219,13 @@ const sdkSessionIdentity = async function sdkSessionIdentity(
   ownerHash: string;
   sessionHash: string;
 }> {
+  const [apiKeyHash, sessionHash] = await Promise.all([
+    sessionOwnerKey ? undefined : sha256Hex(apiKey),
+    sha256Hex(sessionKey),
+  ]);
   const ownerHash = await sha256Hex(
-    sessionOwnerKey || `cursor-key:${await sha256Hex(apiKey)}`
+    sessionOwnerKey || `cursor-key:${apiKeyHash}`
   );
-  const sessionHash = await sha256Hex(sessionKey);
   return {
     id: await sha256Hex(`${ownerHash}\n${sessionHash}`),
     ownerHash,
@@ -299,21 +335,18 @@ const bridgeClientTools = function bridgeClientTools(
   tools: ClientToolSpec[] | undefined
 ): ClientToolSpec[] {
   return (tools ?? []).flatMap((tool) => {
-    const name = typeof tool.name === "string" ? tool.name.trim() : "";
+    const name = tool.name.trim();
     if (!name) {
       return [];
     }
-    return [
-      {
-        name,
-        ...(typeof tool.description === "string" && tool.description
-          ? { description: tool.description }
-          : {}),
-        ...(tool.parameters === undefined
-          ? {}
-          : { parameters: tool.parameters }),
-      },
-    ];
+    const normalizedTool: ClientToolSpec = { name };
+    if (tool.description) {
+      normalizedTool.description = tool.description;
+    }
+    if (tool.parameters !== undefined) {
+      normalizedTool.parameters = tool.parameters;
+    }
+    return [normalizedTool];
   });
 };
 
@@ -334,7 +367,7 @@ const sdkWorkingDirectory = function sdkWorkingDirectory(
 const cursorLocalSdkBridgeTimeoutMs = function cursorLocalSdkBridgeTimeoutMs(
   env: Env
 ): number {
-  const value = Number.parseInt(env.CURSOR_SDK_BRIDGE_TIMEOUT_MS || "", 10);
+  const value = Math.trunc(Number(env.CURSOR_SDK_BRIDGE_TIMEOUT_MS || ""));
   return Number.isFinite(value) && value > 0
     ? value
     : DEFAULT_SDK_BRIDGE_REQUEST_TIMEOUT_MS;
@@ -385,7 +418,7 @@ const cursorLocalSdkContainerBridgeJson =
   ): Promise<Response> {
     const bridgeId = bridgeBinding.idFromName("shared");
     const bridge = bridgeBinding.get(bridgeId);
-    return bridge.fetch("http://cursor-sdk-bridge.local/sdk", {
+    return bridge.fetch("https://cursor-sdk-bridge.local/sdk", {
       body,
       headers: cursorLocalSdkBridgeHeaders(env),
       method: "POST",
@@ -408,20 +441,22 @@ const cursorLocalSdkUrlBridgeJson = function cursorLocalSdkUrlBridgeJson(
   });
 };
 
-const isRecord = function isRecord(
-  value: unknown
-): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+const isStringValue = function isStringValue(value: unknown): value is string {
+  return Object.prototype.toString.call(value) === "[object String]";
+};
+
+const isNumberValue = function isNumberValue(value: unknown): value is number {
+  return Object.prototype.toString.call(value) === "[object Number]";
+};
+
+const isRecord = function isRecord(value: JsonValue): value is JsonObject {
+  return Object.prototype.toString.call(value) === "[object Object]";
 };
 
 const cursorToolCallFromJson = function cursorToolCallFromJson(
-  value: unknown
+  value: JsonValue
 ): CursorToolCall[] {
-  if (
-    !isRecord(value) ||
-    typeof value.name !== "string" ||
-    !value.name.trim()
-  ) {
+  if (!isRecord(value) || !isStringValue(value.name) || !value.name.trim()) {
     return [];
   }
   return [
@@ -434,16 +469,16 @@ const cursorToolCallFromJson = function cursorToolCallFromJson(
 
 const bridgeErrorFromResponse = function bridgeErrorFromResponse(
   response: Response,
-  object: unknown
+  object: JsonValue
 ): never {
   const error =
     isRecord(object) && isRecord(object.error) ? object.error : undefined;
   const message =
-    typeof error?.message === "string" && error.message
+    isStringValue(error?.message) && error.message
       ? error.message
       : `Cursor SDK bridge failed with status ${response.status}`;
   const code =
-    typeof error?.code === "string" && error.code
+    isStringValue(error?.code) && error.code
       ? error.code
       : "cursor_sdk_bridge_error";
   throw new HttpError(message, mapSdkBridgeHttpStatus(response.status), code);
@@ -451,12 +486,13 @@ const bridgeErrorFromResponse = function bridgeErrorFromResponse(
 
 const parseBridgeJsonObject = function parseBridgeJsonObject(
   text: string
-): unknown {
+): JsonValue {
   if (!text.trim()) {
     return {};
   }
   try {
-    return JSON.parse(text);
+    const parsed: JsonValue = JSON.parse(text);
+    return parsed;
   } catch {
     throw new HttpError(
       "Cursor SDK bridge returned invalid JSON",
@@ -470,7 +506,12 @@ const parseCursorLocalSdkBridgeJsonResponse =
   async function parseCursorLocalSdkBridgeJsonResponse(
     response: Response
   ): Promise<CursorSdkBridgeOutput> {
-    const text = await response.text().catch(() => "");
+    let text = "";
+    try {
+      text = await response.text();
+    } catch {
+      // The body is optional for an error response.
+    }
     const object = parseBridgeJsonObject(text);
     if (!response.ok) {
       bridgeErrorFromResponse(response, object);
@@ -483,10 +524,10 @@ const parseCursorLocalSdkBridgeJsonResponse =
       );
     }
     return {
-      agentID: typeof object.agentID === "string" ? object.agentID : undefined,
-      runID: typeof object.runID === "string" ? object.runID : undefined,
-      status: typeof object.status === "string" ? object.status : undefined,
-      text: typeof object.text === "string" ? object.text : "",
+      agentID: isStringValue(object.agentID) ? object.agentID : undefined,
+      runID: isStringValue(object.runID) ? object.runID : undefined,
+      status: isStringValue(object.status) ? object.status : undefined,
+      text: isStringValue(object.text) ? object.text : "",
       toolCalls: Array.isArray(object.toolCalls)
         ? object.toolCalls.flatMap(cursorToolCallFromJson)
         : [],
@@ -542,20 +583,20 @@ const cursorLocalSdkBridgeJson = async function cursorLocalSdkBridgeJson(
 };
 
 const stringArg = function stringArg(
-  args: Record<string, unknown>,
+  args: ToolArguments,
   key: string
 ): string | undefined {
   const value = args[key];
-  return typeof value === "string" && value ? value : undefined;
+  return isStringValue(value) && value ? value : undefined;
 };
 
 const stringArgAllowEmpty = function stringArgAllowEmpty(
-  args: Record<string, unknown>,
+  args: ToolArguments,
   ...keys: string[]
 ): string | undefined {
   for (const key of keys) {
     const value = args[key];
-    if (typeof value === "string") {
+    if (isStringValue(value)) {
       return value;
     }
   }
@@ -569,9 +610,10 @@ const normalizeSdkToolCallForOpenCode =
     if (toolCall.name.toLowerCase() !== "edit") {
       return toolCall;
     }
-    const path = stringArg(toolCall.arguments, "path");
+    const args = toolCall.arguments;
+    const path = stringArg(args, "path");
     const streamContent = stringArgAllowEmpty(
-      toolCall.arguments,
+      args,
       "streamContent",
       "stream_content"
     );
@@ -588,22 +630,21 @@ const normalizeSdkToolCallForOpenCode =
   };
 
 const hasStringArg = function hasStringArg(
-  args: Record<string, unknown>,
+  args: ToolArguments,
   key: string
 ): boolean {
-  return typeof args[key] === "string" && args[key].trim().length > 0;
+  const value = args[key];
+  return isStringValue(value) && value.trim().length > 0;
 };
 
 const hasAnyStringArg = function hasAnyStringArg(
-  args: Record<string, unknown>,
+  args: ToolArguments,
   ...keys: string[]
 ): boolean {
   return keys.some((key) => hasStringArg(args, key));
 };
 
-const hasGlobRequest = function hasGlobRequest(
-  args: Record<string, unknown>
-): boolean {
+const hasGlobRequest = function hasGlobRequest(args: ToolArguments): boolean {
   if (
     hasAnyStringArg(
       args,
@@ -626,21 +667,21 @@ const hasGlobRequest = function hasGlobRequest(
     stringArg(args, "target_directory") ||
     stringArg(args, "targeting") ||
     stringArg(args, "path");
-  return typeof target === "string" && SDK_GLOB_IN_PATH_PATTERN.test(target);
+  return isStringValue(target) && SDK_GLOB_IN_PATH_PATTERN.test(target);
 };
 
 const hasAnyStringArgAllowEmpty = function hasAnyStringArgAllowEmpty(
-  args: Record<string, unknown>,
+  args: ToolArguments,
   ...keys: string[]
 ): boolean {
-  return keys.some((key) => typeof args[key] === "string");
+  return keys.some((key) => isStringValue(args[key]));
 };
 
 const isEmittableSdkToolCall = function isEmittableSdkToolCall(
   toolCall: CursorToolCall
 ): boolean {
   const name = toolCall.name.toLowerCase();
-  const args = toolCall.arguments ?? {};
+  const args = toolCall.arguments;
   if (name === "glob") {
     return hasGlobRequest(args);
   }
@@ -740,7 +781,7 @@ const isEmittableSdkToolCall = function isEmittableSdkToolCall(
   if (name === "readLints") {
     return (
       Array.isArray(args.paths) &&
-      args.paths.some((item) => typeof item === "string" && item.trim())
+      args.paths.some((item) => isStringValue(item) && item.trim())
     );
   }
   if (name === "mcp") {
@@ -766,7 +807,7 @@ const streamCursorLocalSdkBridgeRun =
     }
   ): AsyncGenerator<CursorTextEvent> {
     const output = await cursorLocalSdkBridgeJson(env, deps, apiKey, input);
-    const text = typeof output.text === "string" ? output.text : "";
+    const text = output.text ?? "";
     const toolCalls: CursorToolCall[] = [];
     const rawToolCalls = Array.isArray(output.toolCalls)
       ? output.toolCalls
@@ -775,30 +816,28 @@ const streamCursorLocalSdkBridgeRun =
       yield { text, type: "text" };
     }
     for (const rawToolCall of rawToolCalls) {
-      if (!rawToolCall || typeof rawToolCall.name !== "string") {
-        continue;
+      if (rawToolCall?.name) {
+        const toolCall = normalizeSdkToolCallForOpenCode({
+          arguments: rawToolCall.arguments,
+          name: rawToolCall.name,
+        });
+        if (isEmittableSdkToolCall(toolCall)) {
+          const decision = input.allowToolCall?.(toolCall) ?? true;
+          if (decision !== true) {
+            yield {
+              reason: isStringValue(decision) ? decision : undefined,
+              toolCall,
+              type: "rejected_tool_call",
+            };
+            yield { finalText: text, toolCalls, type: "done" };
+            return;
+          }
+          toolCalls.push(toolCall);
+          yield { toolCall, type: "tool_call" };
+          yield { finalText: text, toolCalls, type: "done" };
+          return;
+        }
       }
-      const toolCall = normalizeSdkToolCallForOpenCode({
-        arguments: isRecord(rawToolCall.arguments) ? rawToolCall.arguments : {},
-        name: rawToolCall.name,
-      });
-      if (!isEmittableSdkToolCall(toolCall)) {
-        continue;
-      }
-      const decision = input.allowToolCall?.(toolCall) ?? true;
-      if (decision !== true) {
-        yield {
-          reason: typeof decision === "string" ? decision : undefined,
-          toolCall,
-          type: "rejected_tool_call",
-        };
-        yield { finalText: text, toolCalls, type: "done" };
-        return;
-      }
-      toolCalls.push(toolCall);
-      yield { toolCall, type: "tool_call" };
-      yield { finalText: text, toolCalls, type: "done" };
-      return;
     }
     yield { finalText: text, toolCalls, type: "done" };
   };
@@ -845,16 +884,9 @@ const drainCursorTextEvents = async function drainCursorTextEvents(
   stream: AsyncIterable<CursorTextEvent>,
   onEvent: (event: CursorTextEvent) => void
 ): Promise<void> {
-  const iterator = stream[Symbol.asyncIterator]();
-  const step = async (): Promise<void> => {
-    const next = await iterator.next();
-    if (next.done) {
-      return;
-    }
-    onEvent(next.value);
-    await step();
-  };
-  await step();
+  for await (const event of stream) {
+    onEvent(event);
+  }
 };
 
 const streamCursorLocalSdkBridgeRunWithRetry =
@@ -1060,17 +1092,16 @@ const encodeAgentClientRunRequest =
     return protoMessage([protoMessageField(1, runRequest)]);
   };
 
-const parseCursorSdkError = function parseCursorSdkError(text: string): {
-  message?: string;
-  code?: string;
-} {
+const parseCursorSdkError = function parseCursorSdkError(
+  text: string
+): ParsedBridgeError {
   try {
-    const payload = JSON.parse(text) as unknown;
+    const payload: JsonValue = JSON.parse(text);
     if (isRecord(payload)) {
       const error = isRecord(payload.error) ? payload.error : payload;
       return {
-        code: typeof error.code === "string" ? error.code : undefined,
-        message: typeof error.message === "string" ? error.message : undefined,
+        code: isStringValue(error.code) ? error.code : undefined,
+        message: isStringValue(error.message) ? error.message : undefined,
       };
     }
   } catch {
@@ -1096,9 +1127,14 @@ const cursorLocalSdkRaw = async function cursorLocalSdkRaw(
       "cursor_missing_backend_url"
     );
   }
-  const url = ABSOLUTE_URL_PATTERN.test(endpoint)
-    ? endpoint
-    : `${base.replace(TRAILING_SLASH_PATTERN, "")}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`;
+  let url = endpoint;
+  if (!ABSOLUTE_URL_PATTERN.test(endpoint)) {
+    const normalizedBase = base.replace(TRAILING_SLASH_PATTERN, "");
+    const normalizedEndpoint = endpoint.startsWith("/")
+      ? endpoint
+      : `/${endpoint}`;
+    url = normalizedBase + normalizedEndpoint;
+  }
   const headers = new Headers({
     Authorization: `Bearer ${accessToken}`,
     "Connect-Protocol-Version": "1",
@@ -1124,7 +1160,12 @@ const cursorLocalSdkRaw = async function cursorLocalSdkRaw(
   }
   const response = await deps.fetch(url, init);
   if (!response.ok) {
-    const text = await response.text().catch(() => "");
+    let text = "";
+    try {
+      text = await response.text();
+    } catch {
+      // Error responses may not include a readable body.
+    }
     const parsed = parseCursorSdkError(text);
     const message =
       response.status === 401
@@ -1159,20 +1200,19 @@ const writeSdkUpload = async function writeSdkUpload(
   writer: WritableStreamDefaultWriter<Uint8Array>,
   frame: Uint8Array
 ): Promise<void> {
-  await writer.write(frame).catch((error) => {
+  try {
+    await writer.write(frame);
+  } catch (error) {
     throw error instanceof Error ? error : new Error(String(error));
-  });
+  }
 };
 
-const waitForAbortSignal = function waitForAbortSignal(
+const waitForAbortSignal = async function waitForAbortSignal(
   signal: AbortSignal
 ): Promise<void> {
-  if (signal.aborted) {
-    return Promise.resolve();
+  if (!signal.aborted) {
+    await once(signal, "abort");
   }
-  return once(signal, "abort").then(() => {
-    void 0;
-  });
 };
 
 const withSdkStartTimeout = function withSdkStartTimeout<T>(
@@ -1194,7 +1234,7 @@ const concatBytes = function concatBytes(
   a: Uint8Array<ArrayBufferLike>,
   b: Uint8Array<ArrayBufferLike>
 ): Uint8Array<ArrayBuffer> {
-  const out = new Uint8Array(a.length + b.length) as Uint8Array<ArrayBuffer>;
+  const out = new Uint8Array(a.length + b.length);
   out.set(a, 0);
   out.set(b, a.length);
   return out;
@@ -1215,12 +1255,11 @@ const handleEndStreamFrame = function handleEndStreamFrame(
     return;
   }
   try {
-    const parsed = JSON.parse(text) as unknown;
+    const parsed: JsonValue = JSON.parse(text);
     if (isRecord(parsed) && isRecord(parsed.error)) {
-      const message =
-        typeof parsed.error.message === "string"
-          ? parsed.error.message
-          : "Cursor local SDK stream failed";
+      const message = isStringValue(parsed.error.message)
+        ? parsed.error.message
+        : "Cursor local SDK stream failed";
       throw new HttpError(message, 502, "cursor_stream_error");
     }
   } catch (error) {
@@ -1236,71 +1275,44 @@ const parseConnectProtoFrames = async function* parseConnectProtoFrames(
   if (!stream) {
     return;
   }
-  const reader = stream.getReader();
   let buffer = new Uint8Array(0);
-  const readChunk = async (): Promise<Uint8Array | null> => {
-    const { value, done } = await reader.read();
-    if (done) {
-      return null;
+  for await (const chunk of stream) {
+    if (chunk.length) {
+      buffer = concatBytes(buffer, chunk);
     }
-    return value ?? new Uint8Array(0);
-  };
-  const drainFrames =
-    async function* drainFrames(): AsyncGenerator<Uint8Array> {
-      if (buffer.length < 5) {
-        return;
-      }
+    let hasCompleteFrame = true;
+    while (hasCompleteFrame && buffer.length >= 5) {
       const [flags] = buffer;
       const length = new DataView(
         buffer.buffer,
         buffer.byteOffset + 1,
         4
       ).getUint32(0, false);
-      if (buffer.length < 5 + length) {
-        return;
+      hasCompleteFrame = buffer.length >= 5 + length;
+      if (hasCompleteFrame) {
+        const payload = buffer.slice(5, 5 + length);
+        buffer = buffer.slice(5 + length);
+        if (connectFlagHas(flags, 1)) {
+          throw new HttpError(
+            "Cursor returned a compressed SDK frame that this Worker cannot decode.",
+            502,
+            "cursor_stream_error"
+          );
+        }
+        if (connectFlagHas(flags, 2)) {
+          handleEndStreamFrame(payload);
+        } else {
+          yield payload;
+        }
       }
-      const payload = buffer.slice(5, 5 + length);
-      buffer = buffer.slice(5 + length);
-      if (connectFlagHas(flags, 1)) {
-        throw new HttpError(
-          "Cursor returned a compressed SDK frame that this Worker cannot decode.",
-          502,
-          "cursor_stream_error"
-        );
-      }
-      if (connectFlagHas(flags, 2)) {
-        handleEndStreamFrame(payload);
-      } else {
-        yield payload;
-      }
-      yield* drainFrames();
-    };
-  const pump = async function* pump(): AsyncGenerator<Uint8Array> {
-    const chunk = await readChunk();
-    if (chunk === null) {
-      return;
     }
-    if (chunk.length) {
-      buffer = concatBytes(buffer, chunk);
-    }
-    yield* drainFrames();
-    yield* pump();
-  };
-  try {
-    yield* pump();
-  } finally {
-    await reader.cancel().catch(ignoreError);
-    reader.releaseLock();
   }
 };
 
 const readVarint = function readVarint(
   bytes: Uint8Array,
   startOffset: number
-): {
-  value: number;
-  offset: number;
-} {
+): VarintRead {
   let value = 0;
   let shift = 0;
   let offset = startOffset;
@@ -1321,7 +1333,8 @@ const decodeProtobufFields = function decodeProtobufFields(
 ): ProtobufField[] {
   const fields: ProtobufField[] = [];
   let offset = 0;
-  while (offset < bytes.length) {
+  let valid = true;
+  while (offset < bytes.length && valid) {
     const key = readVarint(bytes, offset);
     ({ offset } = key);
     const fieldNumber = protoFieldNumber(key.value);
@@ -1333,42 +1346,45 @@ const decodeProtobufFields = function decodeProtobufFields(
     } else if (wireType === 1) {
       const end = offset + 8;
       if (end > bytes.length) {
-        break;
+        valid = false;
+      } else {
+        const view = new DataView(bytes.buffer, bytes.byteOffset + offset, 8);
+        fields.push({
+          no: fieldNumber,
+          value: view.getFloat64(0, true),
+          wt: wireType,
+        });
+        offset = end;
       }
-      const view = new DataView(bytes.buffer, bytes.byteOffset + offset, 8);
-      fields.push({
-        no: fieldNumber,
-        value: view.getFloat64(0, true),
-        wt: wireType,
-      });
-      offset = end;
     } else if (wireType === 2) {
       const length = readVarint(bytes, offset);
       ({ offset } = length);
       const end = offset + length.value;
       if (end > bytes.length) {
-        break;
+        valid = false;
+      } else {
+        fields.push({
+          no: fieldNumber,
+          value: bytes.slice(offset, end),
+          wt: wireType,
+        });
+        offset = end;
       }
-      fields.push({
-        no: fieldNumber,
-        value: bytes.slice(offset, end),
-        wt: wireType,
-      });
-      offset = end;
     } else if (wireType === 5) {
       const end = offset + 4;
       if (end > bytes.length) {
-        break;
+        valid = false;
+      } else {
+        const view = new DataView(bytes.buffer, bytes.byteOffset + offset, 4);
+        fields.push({
+          no: fieldNumber,
+          value: view.getUint32(0, true),
+          wt: wireType,
+        });
+        offset = end;
       }
-      const view = new DataView(bytes.buffer, bytes.byteOffset + offset, 4);
-      fields.push({
-        no: fieldNumber,
-        value: view.getUint32(0, true),
-        wt: wireType,
-      });
-      offset = end;
     } else {
-      break;
+      valid = false;
     }
   }
   return fields;
@@ -1400,15 +1416,16 @@ const stableToolCallId = function stableToolCallId(value: Uint8Array): string {
   return `tool_${hash.toString(16)}`;
 };
 
-const compactRecord = function compactRecord(
-  input: Record<string, unknown>
-): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(input).filter(
-      ([, value]) =>
-        value !== undefined && (!Array.isArray(value) || value.length > 0)
-    )
-  );
+const compactRecord = function compactRecord(input: {
+  [key: string]: JsonValue | undefined;
+}): JsonObject {
+  const output: JsonObject = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (value !== undefined && (!Array.isArray(value) || value.length > 0)) {
+      output[key] = value;
+    }
+  }
+  return output;
 };
 
 const numberField = function numberField(
@@ -1416,9 +1433,9 @@ const numberField = function numberField(
   fieldNumber: number
 ): number | undefined {
   const field = fields.find(
-    (item) => item.no === fieldNumber && typeof item.value === "number"
+    (item) => item.no === fieldNumber && isNumberValue(item.value)
   );
-  return typeof field?.value === "number" ? field.value : undefined;
+  return field && isNumberValue(field.value) ? field.value : undefined;
 };
 
 const booleanField = function booleanField(
@@ -1433,19 +1450,22 @@ const stringFields = function stringFields(
   fields: ProtobufField[],
   fieldNumber: number
 ): string[] | undefined {
-  const values = fields
-    .filter(
-      (item) => item.no === fieldNumber && item.value instanceof Uint8Array
-    )
-    .map((item) => decodeUtf8(item.value as Uint8Array));
+  const values: string[] = [];
+  for (const field of fields) {
+    if (field.no === fieldNumber && field.value instanceof Uint8Array) {
+      values.push(decodeUtf8(field.value));
+    }
+  }
   return values.length ? values : undefined;
 };
 
 const protoSchemaCodec = {
-  decodeProtoValue: function decodeProtoValue(bytes: Uint8Array): unknown {
+  decodeProtoValue: function decodeProtoValue(
+    bytes: Uint8Array
+  ): JsonValue | undefined {
     const protoStruct = function protoStruct(
       structBytes: Uint8Array
-    ): Record<string, unknown> {
+    ): JsonObject {
       return (
         protoSchemaCodec.decodeProtoValueMap(
           decodeProtobufFields(structBytes),
@@ -1454,15 +1474,14 @@ const protoSchemaCodec = {
       );
     };
 
-    const protoList = function protoList(listBytes: Uint8Array): unknown[] {
-      const output: unknown[] = [];
+    const protoList = function protoList(listBytes: Uint8Array): JsonValue[] {
+      const output: JsonValue[] = [];
       for (const field of decodeProtobufFields(listBytes)) {
-        if (field.no !== 1 || !(field.value instanceof Uint8Array)) {
-          continue;
-        }
-        const value = protoSchemaCodec.decodeProtoValue(field.value);
-        if (value !== undefined) {
-          output.push(value);
+        if (field.no === 1 && field.value instanceof Uint8Array) {
+          const value = protoSchemaCodec.decodeProtoValue(field.value);
+          if (value !== undefined) {
+            output.push(value);
+          }
         }
       }
       return output;
@@ -1497,20 +1516,19 @@ const protoSchemaCodec = {
   decodeProtoValueMap: function decodeProtoValueMap(
     fields: ProtobufField[],
     fieldNumber: number
-  ): Record<string, unknown> | undefined {
-    const output: Record<string, unknown> = {};
+  ): JsonObject | undefined {
+    const output: JsonObject = {};
     for (const field of fields) {
-      if (field.no !== fieldNumber || !(field.value instanceof Uint8Array)) {
-        continue;
-      }
-      const entryFields = decodeProtobufFields(field.value);
-      const key = stringField(entryFields, 1);
-      const valueBytes = bytesField(entryFields, 2);
-      const value = valueBytes
-        ? protoSchemaCodec.decodeProtoValue(valueBytes)
-        : undefined;
-      if (key && value !== undefined) {
-        output[key] = value;
+      if (field.no === fieldNumber && field.value instanceof Uint8Array) {
+        const entryFields = decodeProtobufFields(field.value);
+        const key = stringField(entryFields, 1);
+        const valueBytes = bytesField(entryFields, 2);
+        const value = valueBytes
+          ? protoSchemaCodec.decodeProtoValue(valueBytes)
+          : undefined;
+        if (key && value !== undefined) {
+          output[key] = value;
+        }
       }
     }
     return Object.keys(output).length ? output : undefined;
@@ -1522,7 +1540,7 @@ const protoValueMap = protoSchemaCodec.decodeProtoValueMap;
 const decodeToolArgs = function decodeToolArgs(
   kind: ArgsKind,
   payload: Uint8Array
-): Record<string, unknown> {
+): JsonObject {
   const fields = decodeProtobufFields(payload);
   switch (kind) {
     case "shell": {
@@ -1631,23 +1649,19 @@ const decodeSdkToolCall = function decodeSdkToolCall(payload: Uint8Array): {
   hasResult: boolean;
 } | null {
   for (const field of decodeProtobufFields(payload)) {
-    if (!(field.value instanceof Uint8Array)) {
-      continue;
-    }
     const spec = TOOL_CALL_SPECS[field.no];
-    if (!spec) {
-      continue;
+    if (field.value instanceof Uint8Array && spec) {
+      const toolFields = decodeProtobufFields(field.value);
+      const args = bytesField(toolFields, 1);
+      const hasResult = toolFields.some((item) => item.no === 2);
+      return {
+        hasResult,
+        toolCall: {
+          arguments: args ? decodeToolArgs(spec.argsKind, args) : {},
+          name: spec.name,
+        },
+      };
     }
-    const toolFields = decodeProtobufFields(field.value);
-    const args = bytesField(toolFields, 1);
-    const hasResult = toolFields.some((item) => item.no === 2);
-    return {
-      hasResult,
-      toolCall: {
-        arguments: args ? decodeToolArgs(spec.argsKind, args) : {},
-        name: spec.name,
-      },
-    };
   }
   return null;
 };
@@ -1705,27 +1719,23 @@ const decodeExecServerToolCall = function decodeExecServerToolCall(
   const id = numberField(fields, 1);
   const execId = stringField(fields, 15);
   for (const field of fields) {
-    if (!(field.value instanceof Uint8Array)) {
-      continue;
-    }
     const spec = EXEC_TOOL_SPECS[field.no];
-    if (!spec) {
-      continue;
+    if (field.value instanceof Uint8Array && spec) {
+      const args = decodeToolArgs(spec.argsKind, field.value);
+      const toolCallId =
+        stringArg(args, "toolCallId") ||
+        execId ||
+        `exec_${id ?? stableToolCallId(payload)}`;
+      delete args.toolCallId;
+      return {
+        id: toolCallId,
+        toolCall: normalizeSdkToolCallForOpenCode({
+          arguments: args,
+          name: spec.name,
+        }),
+        type: "tool_call",
+      };
     }
-    const args = decodeToolArgs(spec.argsKind, field.value);
-    const toolCallId =
-      stringArg(args, "toolCallId") ||
-      execId ||
-      `exec_${id ?? stableToolCallId(payload)}`;
-    delete args.toolCallId;
-    return {
-      id: toolCallId,
-      toolCall: normalizeSdkToolCallForOpenCode({
-        arguments: args,
-        name: spec.name,
-      }),
-      type: "tool_call",
-    };
   }
   return null;
 };
@@ -1820,118 +1830,89 @@ const encodeAgentClientRequestContextResult =
 const closeSdkUpload = async function closeSdkUpload(
   writer: WritableStreamDefaultWriter<Uint8Array>
 ): Promise<void> {
-  await writer.close().catch(ignoreError);
-  writer.releaseLock();
+  try {
+    await writer.close();
+  } catch {
+    // Closing is best-effort after the run completes.
+  } finally {
+    writer.releaseLock();
+  }
+};
+
+const writeSdkRequestContexts = async function writeSdkRequestContexts(
+  events: ReturnType<typeof decodeLocalAgentServerFrame>,
+  workingDirectory: string | undefined,
+  state: LocalSdkStreamState
+): Promise<void> {
+  if (!state.uploadOpen) {
+    return;
+  }
+  const frames: Uint8Array[] = [];
+  for (const event of events) {
+    if (event.type === "request_context") {
+      frames.push(
+        encodeConnectFrame(
+          encodeAgentClientRequestContextResult(event, { workingDirectory })
+        )
+      );
+    }
+  }
+  await Promise.all(
+    frames.map((frame) => writeSdkUpload(state.uploadWriter, frame))
+  );
+};
+
+const emitLocalSdkToolCall = async function* emitLocalSdkToolCall(
+  event: Extract<LocalSdkDecodedEvent, { type: "tool_call" }>,
+  input: {
+    allowToolCall?: (toolCall: CursorToolCall) => ToolCallDecision;
+  },
+  state: LocalSdkStreamState
+): AsyncGenerator<CursorTextEvent> {
+  if (!isEmittableSdkToolCall(event.toolCall)) {
+    return;
+  }
+  const decision = input.allowToolCall?.(event.toolCall) ?? true;
+  if (decision !== true) {
+    yield {
+      reason: isStringValue(decision) ? decision : undefined,
+      toolCall: event.toolCall,
+      type: "rejected_tool_call",
+    };
+  } else if (state.emittedToolCallIds.has(event.id)) {
+    return;
+  } else {
+    state.emittedToolCallIds.add(event.id);
+    state.toolCalls.push(event.toolCall);
+    yield { toolCall: event.toolCall, type: "tool_call" };
+  }
+  state.stop = true;
+  yield { finalText: state.text, toolCalls: state.toolCalls, type: "done" };
 };
 
 const emitLocalSdkFrameEvents = async function* emitLocalSdkFrameEvents(
   events: ReturnType<typeof decodeLocalAgentServerFrame>,
-  eventIndex: number,
-  frameIterator: AsyncIterator<Uint8Array>,
   input: {
     allowToolCall?: (toolCall: CursorToolCall) => ToolCallDecision;
     workingDirectory?: string;
   },
-  state: {
-    emittedToolCallIds: Set<string>;
-    text: string;
-    toolCalls: CursorToolCall[];
-    uploadOpen: boolean;
-    uploadWriter: WritableStreamDefaultWriter<Uint8Array>;
-  }
+  state: LocalSdkStreamState
 ): AsyncGenerator<CursorTextEvent> {
-  if (eventIndex >= events.length) {
-    return;
-  }
-  const event = events[eventIndex];
-  if (event.type === "text" && event.text) {
-    state.text += event.text;
-    yield { text: event.text, type: "text" };
-    yield* emitLocalSdkFrameEvents(
-      events,
-      eventIndex + 1,
-      frameIterator,
-      input,
-      state
-    );
-    return;
-  }
-  if (event.type === "tool_call") {
-    if (!isEmittableSdkToolCall(event.toolCall)) {
-      yield* emitLocalSdkFrameEvents(
-        events,
-        eventIndex + 1,
-        frameIterator,
-        input,
-        state
-      );
+  await writeSdkRequestContexts(events, input.workingDirectory, state);
+  for (const event of events) {
+    if (event.type === "text" && event.text) {
+      state.text += event.text;
+      yield { text: event.text, type: "text" };
+    } else if (event.type === "tool_call") {
+      yield* emitLocalSdkToolCall(event, input, state);
+      if (state.stop) {
+        return;
+      }
+    } else if (event.type === "done") {
+      yield { finalText: state.text, toolCalls: state.toolCalls, type: "done" };
       return;
     }
-    const decision = input.allowToolCall?.(event.toolCall) ?? true;
-    if (decision !== true) {
-      yield {
-        reason: typeof decision === "string" ? decision : undefined,
-        toolCall: event.toolCall,
-        type: "rejected_tool_call",
-      };
-      yield {
-        finalText: state.text,
-        toolCalls: state.toolCalls,
-        type: "done",
-      };
-      return;
-    }
-    if (!state.emittedToolCallIds.has(event.id)) {
-      state.emittedToolCallIds.add(event.id);
-      state.toolCalls.push(event.toolCall);
-      yield { toolCall: event.toolCall, type: "tool_call" };
-      yield {
-        finalText: state.text,
-        toolCalls: state.toolCalls,
-        type: "done",
-      };
-      return;
-    }
-    yield* emitLocalSdkFrameEvents(
-      events,
-      eventIndex + 1,
-      frameIterator,
-      input,
-      state
-    );
-    return;
   }
-  if (event.type === "request_context") {
-    if (state.uploadOpen && state.uploadWriter) {
-      await writeSdkUpload(
-        state.uploadWriter,
-        encodeConnectFrame(
-          encodeAgentClientRequestContextResult(event, {
-            workingDirectory: input.workingDirectory,
-          })
-        )
-      );
-    }
-    yield* emitLocalSdkFrameEvents(
-      events,
-      eventIndex + 1,
-      frameIterator,
-      input,
-      state
-    );
-    return;
-  }
-  if (event.type === "done") {
-    yield { finalText: state.text, toolCalls: state.toolCalls, type: "done" };
-    return;
-  }
-  yield* emitLocalSdkFrameEvents(
-    events,
-    eventIndex + 1,
-    frameIterator,
-    input,
-    state
-  );
 };
 
 const advanceLocalSdkFrame = async function* advanceLocalSdkFrame(
@@ -1940,21 +1921,15 @@ const advanceLocalSdkFrame = async function* advanceLocalSdkFrame(
     allowToolCall?: (toolCall: CursorToolCall) => ToolCallDecision;
     workingDirectory?: string;
   },
-  state: {
-    emittedToolCallIds: Set<string>;
-    text: string;
-    toolCalls: CursorToolCall[];
-    uploadOpen: boolean;
-    uploadWriter: WritableStreamDefaultWriter<Uint8Array>;
-  }
+  state: LocalSdkStreamState
 ): AsyncGenerator<CursorTextEvent> {
-  const next = await frameIterator.next();
-  if (next.done) {
-    return;
+  const frames: AsyncIterable<Uint8Array> = {
+    [Symbol.asyncIterator]: () => frameIterator,
+  };
+  for await (const frame of frames) {
+    const events = decodeLocalAgentServerFrame(frame);
+    yield* emitLocalSdkFrameEvents(events, input, state);
   }
-  const events = decodeLocalAgentServerFrame(next.value);
-  yield* emitLocalSdkFrameEvents(events, 0, frameIterator, input, state);
-  yield* advanceLocalSdkFrame(frameIterator, input, state);
 };
 
 const streamCursorLocalSdkRun = async function* streamCursorLocalSdkRun(
@@ -1993,17 +1968,16 @@ const streamCursorLocalSdkRun = async function* streamCursorLocalSdkRun(
       upload.readable,
       runAbort.signal
     );
-    return {
-      response,
-      source: "run" as const,
-    };
+    return { response };
   })();
   const selected = await withSdkStartTimeout(runResponsePromise);
   const { response } = selected;
+  const toolCalls: CursorToolCall[] = [];
   const state = {
     emittedToolCallIds: new Set<string>(),
+    stop: false,
     text: "",
-    toolCalls: [] as CursorToolCall[],
+    toolCalls,
     uploadOpen: false,
     uploadWriter,
   };
@@ -2104,6 +2078,14 @@ const streamCursorLocalSdkRunWithRetry =
     yield* attemptRun(input, 1);
   };
 
+/**
+ * Creates a Cursor SDK completion stream for the supplied request.
+ * @param env - Runtime environment and configured bridge bindings.
+ * @param deps - Runtime dependencies used by the SDK adapter.
+ * @param apiKey - The user's Cursor API key.
+ * @param input - Prompt, model, session, and tool configuration.
+ * @returns Completion identifiers and an asynchronous event stream.
+ */
 export const createCursorSdkCompletion =
   async function createCursorSdkCompletion(
     env: Env,
@@ -2189,6 +2171,11 @@ export const createCursorSdkCompletion =
     };
   };
 
+/**
+ * Collects text and tool calls from a Cursor SDK completion stream.
+ * @param stream - The completion event stream to consume.
+ * @returns The collected response text and tool calls.
+ */
 export const collectCursorSdkOutput = async function collectCursorSdkOutput(
   stream: AsyncIterable<CursorTextEvent>
 ): Promise<CursorCollectedOutput> {
