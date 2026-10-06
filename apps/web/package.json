@@ -22,7 +22,7 @@
     "cf-typegen": "wrangler types",
     "fix": "ultracite fix",
     "preview": "vite preview",
-    "typecheck": "tsgo --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {

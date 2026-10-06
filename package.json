@@ -39,6 +39,7 @@
     "eslint-plugin-jsdoc": "^65.1.0",
     "eslint-plugin-sonarjs": "^4.2.2",
     "eslint-plugin-tsdoc": "^0.5.4",
+    "knip": "^6.21.0",
     "lefthook": "^2.1.17",
     "oxfmt": "^0.72.0",
     "oxlint": "^1.87.0",

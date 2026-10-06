@@ -5,7 +5,7 @@
     "apps/cli": {
       "entry": ["scripts/*.ts", "bridge/cursor-sdk-local-agent-bridge.mjs"],
       "project": ["src/**/*.ts", "scripts/**/*.ts", "bridge/**/*.mjs"],
-      "ignoreDependencies": ["@cursor/sdk", "@typescript/native"]
+      "ignoreDependencies": ["@cursor/sdk"]
     },
     "apps/web": {
       "ignoreDependencies": ["@typescript/native"]

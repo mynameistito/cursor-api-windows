@@ -25,7 +25,7 @@
   "type": "module",
   "scripts": {
     "dev": "bun run src/cli.ts",
-    "typecheck": "tsgo --noEmit",
+    "typecheck": "tsc --noEmit",
     "build": "bun run scripts/build.ts",
     "stage:bridge": "bun run scripts/stage-bridge.ts",
     "test": "vitest run",
