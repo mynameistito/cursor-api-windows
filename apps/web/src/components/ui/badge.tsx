@@ -1,12 +1,12 @@
 import { cva } from "class-variance-authority";
 import type { VariantProps } from "class-variance-authority";
 import { Slot } from "radix-ui";
-import * as React from "react";
+import type { ComponentProps } from "react";
 
 import { cn } from "@/lib/utils";
 
 const badgeVariants = cva(
-  "inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-md border border-transparent px-2 py-0.5 text-xs font-medium whitespace-nowrap transition-[color,background-color,border-color,box-shadow] focus-visible:shadow-[var(--focus-ring)] aria-invalid:border-destructive aria-invalid:shadow-[0_0_0_2px_var(--background),0_0_0_4px_var(--destructive)] [&>svg]:pointer-events-none [&>svg]:size-3",
+  "aria-invalid:border-destructive inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-md border border-transparent px-2 py-0.5 text-xs font-medium whitespace-nowrap transition-[color,background-color,border-color,box-shadow] focus-visible:shadow-[var(--focus-ring)] aria-invalid:shadow-[0_0_0_2px_var(--background),0_0_0_4px_var(--destructive)] [&>svg]:pointer-events-none [&>svg]:size-3",
   {
     defaultVariants: {
       variant: "default",
@@ -14,7 +14,7 @@ const badgeVariants = cva(
     variants: {
       variant: {
         default: "bg-primary text-primary-foreground [a&]:hover:bg-primary/90",
-        destructive: "bg-destructive text-white [a&]:hover:bg-destructive/90",
+        destructive: "bg-destructive [a&]:hover:bg-destructive/90 text-white",
         ghost: "[a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
         link: "text-primary underline-offset-4 [a&]:hover:underline",
         outline:
@@ -31,7 +31,7 @@ const Badge = ({
   variant = "default",
   asChild = false,
   ...props
-}: React.ComponentProps<"span"> &
+}: ComponentProps<"span"> &
   VariantProps<typeof badgeVariants> & { asChild?: boolean }) => {
   const Comp = asChild ? Slot.Root : "span";
 
@@ -45,4 +45,4 @@ const Badge = ({
   );
 };
 
-export { Badge, badgeVariants };
+export { Badge };

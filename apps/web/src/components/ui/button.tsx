@@ -1,12 +1,12 @@
 import { cva } from "class-variance-authority";
 import type { VariantProps } from "class-variance-authority";
 import { Slot } from "radix-ui";
-import * as React from "react";
+import type { ComponentProps } from "react";
 
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap border border-transparent transition-colors outline-none focus-visible:shadow-[var(--focus-ring)] disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-[var(--geist-gray-100)] disabled:text-[var(--geist-gray-700)] aria-invalid:border-destructive aria-invalid:shadow-[0_0_0_2px_var(--background),0_0_0_4px_var(--destructive)] [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "aria-invalid:border-destructive inline-flex shrink-0 items-center justify-center gap-2 rounded-md border border-transparent text-sm font-medium whitespace-nowrap transition-colors outline-none focus-visible:shadow-[var(--focus-ring)] disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-[var(--geist-gray-100)] disabled:text-[var(--geist-gray-700)] aria-invalid:shadow-[0_0_0_2px_var(--background),0_0_0_4px_var(--destructive)] [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     defaultVariants: {
       size: "default",
@@ -29,7 +29,7 @@ const buttonVariants = cva(
         destructive:
           "bg-destructive text-white hover:bg-[color-mix(in_oklab,var(--destructive)_90%,var(--background))]",
         ghost:
-          "text-foreground hover:bg-[var(--geist-gray-alpha-100)] hover:text-foreground",
+          "text-foreground hover:text-foreground hover:bg-[var(--geist-gray-alpha-100)]",
         link: "text-primary underline-offset-4 hover:underline",
         outline:
           "border-border bg-background text-foreground hover:border-[var(--geist-gray-alpha-500)] hover:bg-[var(--geist-gray-alpha-100)]",
@@ -46,7 +46,7 @@ const Button = ({
   size = "default",
   asChild = false,
   ...props
-}: React.ComponentProps<"button"> &
+}: ComponentProps<"button"> &
   VariantProps<typeof buttonVariants> & {
     asChild?: boolean;
   }) => {
@@ -63,4 +63,4 @@ const Button = ({
   );
 };
 
-export { Button, buttonVariants };
+export { Button };

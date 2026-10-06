@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { Github } from "lucide-react";
+import { ExternalLink } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 
@@ -7,15 +7,19 @@ import { ThemeToggle } from "./theme-toggle";
 
 const repoUrl = "https://github.com/mynameistito/cursor-api-windows";
 
+/**
+ * Renders the primary navigation and theme control.
+ * @returns The site header.
+ */
 export const Header = () => (
-  <header className="sticky top-0 z-50 border-b border-border bg-[var(--header-bg)] px-4 backdrop-blur-xl">
+  <header className="border-border bg-background/85 sticky top-0 z-50 border-b px-4 backdrop-blur-xl">
     <nav className="mx-auto flex h-16 w-full max-w-[1200px] items-center gap-3">
       <h2 className="m-0 flex-shrink-0 text-base font-semibold tracking-tight">
         <Link
           to="/"
-          className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground no-underline shadow-[0_2px_2px_rgba(0,0,0,0.04)]"
+          className="border-border bg-background text-foreground inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm no-underline shadow-sm"
         >
-          <span className="h-2 w-2 rounded-full bg-[var(--geist-blue-700)]" />
+          <span className="bg-ring h-2 w-2 rounded-full" />
           cursor-api-windows
         </Link>
       </h2>
@@ -48,7 +52,7 @@ export const Header = () => (
           className="hidden sm:inline-flex md:hidden"
         >
           <a href={repoUrl} target="_blank" rel="noreferrer">
-            <Github className="size-4" />
+            <ExternalLink className="size-4" />
             GitHub
           </a>
         </Button>
