@@ -1,5 +1,12 @@
 # @cursor-api-windows/cli
 
+## 0.1.19
+
+### Patch Changes
+
+- fc5df24: Use a repository-scoped GitHub App token for automated release pull requests and publishing.
+- d2adf92: Improve CLI request validation, daemon and update handling, bridge/release tooling, and type safety.
+
 ## 0.1.18
 
 ### Patch Changes
