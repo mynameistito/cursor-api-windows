@@ -1,17 +1,14 @@
 # Credits
 
-**cursor-api-windows** is an independent CLI-only project. It does not share
-configuration or credentials with the GUI desktop apps.
+**cursor-api-windows** is an independent CLI-only project. It does not share configuration or credentials with the GUI desktop apps.
 
 ## Upstream projects
 
 ### [standardagents/composer-api](https://github.com/standardagents/composer-api) (MIT)
 
-The original **API for Cursor** project by **Standard Agents**. This CLI fork
-reuses and adapts:
+The original **API for Cursor** project by **Standard Agents**. This CLI fork reuses and adapts:
 
-- `src/api/` — OpenAI-compatible request/response translation (`openai.ts`,
-  `cursor.ts`, `cursor-sdk.ts`, `http.ts`, `sse.ts`, …)
+- `src/api/` — OpenAI-compatible request/response translation (`openai.ts`, `cursor.ts`, `cursor-sdk.ts`, `http.ts`, `sse.ts`, …)
 - `scripts/cursor-sdk-local-agent-bridge.mjs` — local `@cursor/sdk` bridge
 - The sidecar HTTP server design (`windows-app/sidecar/server.ts`)
 
@@ -34,8 +31,7 @@ Official Cursor SDK used by the bundled bridge to drive Composer agents.
 
 ### Cursor Composer models
 
-Model names and capabilities (`composer-2.5`, `composer-2.5-fast`) are provided
-by Cursor. This project is not affiliated with or endorsed by Cursor.
+Model names and capabilities (`composer-2.5`, `composer-2.5-fast`) are provided by Cursor. This project is not affiliated with or endorsed by Cursor.
 
 ## This repository
 
@@ -43,5 +39,4 @@ by Cursor. This project is not affiliated with or endorsed by Cursor.
 - **Repo:** [mynameistito/cursor-api-windows](https://github.com/mynameistito/cursor-api-windows)
 - **License:** MIT — see [LICENSE](LICENSE)
 
-If you use this software, please retain attribution to the upstream MIT projects
-when redistributing derived work.
+If you use this software, please retain attribution to the upstream MIT projects when redistributing derived work.

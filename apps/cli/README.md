@@ -6,15 +6,15 @@ Install and usage docs live in the [repository README](../../README.md).
 
 ## Layout
 
-| Path            | Purpose                                                         |
-| --------------- | --------------------------------------------------------------- |
-| `src/cli.ts`    | Commander entrypoint                                            |
-| `src/daemon.ts` | Background supervisor (PID file, start/stop)                    |
-| `src/server.ts` | In-process OpenAI-compatible HTTP server                        |
-| `src/bridge.ts` | Spawns bundled Node SDK bridge                                  |
-| `src/api/`      | Request/response translation layer                              |
-| `bridge/`       | Bundled `@cursor/sdk` runtime (`node.exe` staged at build time) |
-| `scripts/`      | Build, release, and install helpers                             |
+| Path | Purpose |
+| --- | --- |
+| `src/cli.ts` | Commander entrypoint |
+| `src/daemon.ts` | Background supervisor (PID file, start/stop) |
+| `src/server.ts` | In-process OpenAI-compatible HTTP server |
+| `src/bridge.ts` | Spawns bundled Node SDK bridge |
+| `src/api/` | Request/response translation layer |
+| `bridge/` | Bundled `@cursor/sdk` runtime (`node.exe` staged at build time) |
+| `scripts/` | Build, release, and install helpers |
 
 ## Development
 
