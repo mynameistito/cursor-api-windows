@@ -1,4 +1,5 @@
 {
+  "$schema": "https://json.schemastore.org/package.json",
   "name": "cursor-api-windows",
   "private": true,
   "description": "Monorepo for cursor-api for Windows and documentation site.",
@@ -18,9 +19,9 @@
     "build:web": "turbo run build --filter=@cursor-api-windows/web",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
-    "check": "turbo run check",
-    "knip": "turbo run knip",
-    "fix": "turbo run fix",
+    "check": "ultracite check",
+    "knip": "knip --workspace apps/cli",
+    "fix": "ultracite fix",
     "prepare": "lefthook install",
     "changeset": "changeset",
     "changeset-add": "bun run apps/cli/scripts/changeset-add.ts",
@@ -32,19 +33,29 @@
     "stage:bridge": "turbo run stage:bridge --filter=@cursor-api-windows/cli"
   },
   "devDependencies": {
-    "@changesets/cli": "^2.31.0",
-    "lefthook": "^2.1.9",
-    "oxfmt": "^0.56.0",
-    "oxlint": "^1.71.0",
-    "turbo": "^2.5.4",
-    "ultracite": "7.8.3"
-  },
-  "overrides": {
-    "js-yaml": "4.3.0"
+    "@changesets/cli": "^3.0.3",
+    "@shadcn/lint": "^0.2.0",
+    "eslint-plugin-github": "6.1.2",
+    "eslint-plugin-jsdoc": "^65.1.0",
+    "eslint-plugin-sonarjs": "^4.2.2",
+    "eslint-plugin-tsdoc": "^0.5.4",
+    "lefthook": "^2.1.17",
+    "oxfmt": "^0.72.0",
+    "oxlint": "^1.87.0",
+    "oxlint-plugin-react-doctor": "^0.9.17",
+    "turbo": "^2.11.7",
+    "ultracite": "7.12.4"
   },
   "engines": {
     "bun": ">=1.2.0",
     "node": ">=22"
   },
-  "packageManager": "bun@1.3.14"
+  "packageManager": "bun@1.3.14",
+  "catalog": {
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
+    "@typescript/native": "npm:typescript@^7.0.2",
+    "@types/bun": "1.4.2",
+    "@types/node": "^26.6.4",
+    "vitest": "^5.0.3"
+  }
 }
