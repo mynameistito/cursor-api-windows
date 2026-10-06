@@ -1,7 +1,12 @@
 {
   "$schema": "https://unpkg.com/knip@5/schema.json",
   "entry": ["scripts/*.ts", "bridge/cursor-sdk-local-agent-bridge.mjs"],
-  "project": ["src/**/*.ts", "!__tests__/**", "scripts/**/*.ts"],
+  "project": [
+    "src/**/*.ts",
+    "!__tests__/**",
+    "scripts/**/*.ts",
+    "bridge/**/*.mjs"
+  ],
   "ignoreBinaries": ["powershell", "where", "ultracite"],
   "ignoreDependencies": ["@cursor/sdk"]
 }

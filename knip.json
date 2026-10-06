@@ -1,0 +1,11 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "ignoreBinaries": ["knip", "powershell", "where"],
+  "workspaces": {
+    "apps/cli": {
+      "entry": ["scripts/*.ts", "bridge/cursor-sdk-local-agent-bridge.mjs"],
+      "project": ["src/**/*.ts", "scripts/**/*.ts", "bridge/**/*.mjs"],
+      "ignoreDependencies": ["@cursor/sdk"]
+    }
+  }
+}
