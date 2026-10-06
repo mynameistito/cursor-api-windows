@@ -19,6 +19,7 @@ import type {
   CursorToolCall,
   Deps,
   Env,
+  JsonValue,
 } from "./types";
 
 interface CursorAccessTokenResponse {
@@ -52,8 +53,7 @@ const WHITESPACE_PATTERN = /\s/gu;
 
 const NUMERIC_LITERAL_PATTERN = /^-?\d+(?:\.\d+)?$/u;
 
-const INLINE_TOOL_ARG_PATTERN =
-  /^(?<key>[A-Za-z0-9_.-]+)\s*[:=]\s*(?<value>[\s\S]*)$/u;
+const INLINE_TOOL_KEY_PATTERN = /^[A-Za-z0-9_.-]+$/u;
 
 const INLINE_TOOL_CALL_PATTERN =
   /^(?<name>[A-Za-z0-9_.-]+)\s*(?:\((?<paren>[\s\S]*)\)|\[(?<bracket>[\s\S]*)\])?$/u;
@@ -64,7 +64,7 @@ const TOOL_PART_KEY_VALUE_PATTERN =
 const CANONICAL_TOOL_MARKER_PATTERN =
   /<\s*[|｜]\s*(?<marker>tool[_▁]calls[_▁]begin|tool[_▁]calls[_▁]end|tool[_▁]call[_▁]begin|tool[_▁]call[_▁]end|tool[_▁]sep)\s*[|｜]\s*>/gu;
 
-const COMPOSER_TOOL_MARKER_PATTERN = (marker: string) =>
+const composerToolMarkerPattern = (marker: string) =>
   new RegExp(
     `<\\s*[|｜]\\s*${marker.replaceAll("_", "[_▁]")}\\s*[|｜]\\s*>`,
     "u"
@@ -81,6 +81,7 @@ interface EncodedCursorImage {
   uuid: string;
 }
 
+/** Events emitted while decoding Cursor's completion stream. */
 export type CursorTextEvent =
   | {
       type: "text";
@@ -101,6 +102,7 @@ export type CursorTextEvent =
       toolCalls: CursorToolCall[];
     };
 
+/** The combined text and tool calls collected from a Cursor stream. */
 export interface CursorCollectedOutput {
   text: string;
   toolCalls: CursorToolCall[];
@@ -137,24 +139,47 @@ const TOOL_MARKER_CANDIDATES = [
   marker.replaceAll("|", "｜").replaceAll("_", "▁"),
 ]);
 
-const isRecord = function isRecord(
-  value: unknown
-): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+interface JsonObject {
+  [key: string]: JsonValue;
+}
+
+const isJsonObject = function isJsonObject(
+  value: JsonValue | undefined
+): value is JsonObject {
+  return Object.prototype.toString.call(value) === "[object Object]";
+};
+
+const asJsonObject = function asJsonObject(
+  value: JsonValue | undefined
+): JsonObject | null {
+  return isJsonObject(value) ? value : null;
+};
+
+const isString = function isString(
+  value: JsonValue | undefined
+): value is string {
+  return Object.prototype.toString.call(value) === "[object String]";
+};
+
+const isNumber = function isNumber(value: JsonValue): value is number {
+  return Object.prototype.toString.call(value) === "[object Number]";
 };
 
 const canonicalizeComposerToolMarkers =
   function canonicalizeComposerToolMarkers(value: string): string {
     return value.replaceAll(CANONICAL_TOOL_MARKER_PATTERN, (_match, marker) => {
-      const normalizedMarker =
-        typeof marker === "string" ? marker.replaceAll("▁", "_") : "";
+      const normalizedMarker = isString(marker)
+        ? marker.replaceAll("▁", "_")
+        : "";
       return `<|${normalizedMarker}|>`;
     });
   };
 
-const firstString = function firstString(...values: unknown[]): string | null {
+const firstString = function firstString(
+  ...values: (JsonValue | undefined)[]
+): string | null {
   for (const value of values) {
-    if (typeof value === "string" && value.trim()) {
+    if (value !== undefined && isString(value) && value.trim()) {
       return value.trim();
     }
   }
@@ -162,17 +187,20 @@ const firstString = function firstString(...values: unknown[]): string | null {
 };
 
 const recordFromToolArguments = function recordFromToolArguments(
-  value: unknown
-): Record<string, unknown> | null {
-  if (isRecord(value)) {
-    return value;
+  value: JsonValue | undefined
+): JsonObject | null {
+  if (value === undefined) {
+    return null;
   }
-  if (typeof value !== "string" || !value.trim()) {
+  if (!isString(value)) {
+    return asJsonObject(value);
+  }
+  if (!value.trim()) {
     return null;
   }
   try {
-    const decoded = JSON.parse(value) as unknown;
-    return isRecord(decoded) ? decoded : null;
+    const decoded: JsonValue = JSON.parse(value);
+    return asJsonObject(decoded);
   } catch {
     return null;
   }
@@ -185,28 +213,31 @@ const parseJsonToolCallBody = function parseJsonToolCallBody(
     return null;
   }
   try {
-    const parsed = JSON.parse(value) as unknown;
-    if (!isRecord(parsed)) {
+    const parsed: JsonValue = JSON.parse(value);
+    const object = asJsonObject(parsed);
+    if (!object) {
       return null;
     }
-    const fn = isRecord(parsed.function) ? parsed.function : undefined;
+    const fn =
+      object.function === undefined ? undefined : asJsonObject(object.function);
     const name = firstString(
-      parsed.name,
-      parsed.tool,
-      parsed.tool_name,
-      parsed.toolName,
+      object.name,
+      object.tool,
+      object.tool_name,
+      object.toolName,
       fn?.name
     );
     if (!name) {
       return null;
     }
-    const rawArguments =
-      parsed.arguments ??
-      parsed.args ??
-      parsed.input ??
-      parsed.parameters ??
-      parsed.params ??
-      fn?.arguments;
+    const rawArguments = [
+      object.arguments,
+      object.args,
+      object.input,
+      object.parameters,
+      object.params,
+      fn?.arguments,
+    ].find((argument) => argument !== undefined);
     return { arguments: recordFromToolArguments(rawArguments) ?? {}, name };
   } catch {
     return null;
@@ -218,30 +249,24 @@ const splitInlineArguments = function splitInlineArguments(
 ): string[] {
   const parts: string[] = [];
   let start = 0;
+  let index = 0;
   let quote: string | null = null;
   let depth = 0;
-  for (let i = 0; i < value.length; i += 1) {
-    const char = value[i];
-    if (quote) {
-      if (char === quote && value[i - 1] !== "\\") {
-        quote = null;
-      }
-      continue;
-    }
-    if (char === '"' || char === "'") {
+  for (const char of value) {
+    const escaped = value[index - 1] === "\\";
+    if (quote && char === quote && !escaped) {
+      quote = null;
+    } else if (!quote && (char === '"' || char === "'")) {
       quote = char;
-      continue;
-    }
-    if (char === "{" || char === "[") {
+    } else if (!quote && (char === "{" || char === "[")) {
       depth += 1;
-    }
-    if (char === "}" || char === "]") {
+    } else if (!quote && (char === "}" || char === "]")) {
       depth = Math.max(0, depth - 1);
+    } else if (!quote && char === "," && depth === 0) {
+      parts.push(value.slice(start, index));
+      start = index + 1;
     }
-    if (char === "," && depth === 0) {
-      parts.push(value.slice(start, i));
-      start = i + 1;
-    }
+    index += char.length;
   }
   parts.push(value.slice(start));
   return parts;
@@ -249,7 +274,7 @@ const splitInlineArguments = function splitInlineArguments(
 
 const parseComposerToolArgument = function parseComposerToolArgument(
   value: string
-): unknown {
+) {
   if (!value) {
     return "";
   }
@@ -270,7 +295,8 @@ const parseComposerToolArgument = function parseComposerToolArgument(
     (value.startsWith("[") && value.endsWith("]"))
   ) {
     try {
-      return JSON.parse(value) as unknown;
+      const parsed: JsonValue = JSON.parse(value);
+      return parsed;
     } catch {
       return value;
     }
@@ -280,16 +306,26 @@ const parseComposerToolArgument = function parseComposerToolArgument(
 
 const parseInlineToolArguments = function parseInlineToolArguments(
   value: string
-): Record<string, unknown> {
-  const args: Record<string, unknown> = {};
+): JsonObject {
+  const args: JsonObject = {};
   for (const part of splitInlineArguments(value)) {
-    const match = INLINE_TOOL_ARG_PATTERN.exec(part.trim());
-    if (!match?.groups?.key || match.groups.value === undefined) {
-      continue;
+    const trimmed = part.trim();
+    const colon = trimmed.indexOf(":");
+    const equals = trimmed.indexOf("=");
+    let delimiter = Number.POSITIVE_INFINITY;
+    for (const index of [colon, equals]) {
+      if (index >= 0) {
+        delimiter = Math.min(delimiter, index);
+      }
     }
-    args[match.groups.key] = parseComposerToolArgument(
-      match.groups.value.trim()
-    );
+    if (Number.isFinite(delimiter)) {
+      const key = trimmed.slice(0, delimiter).trim();
+      if (INLINE_TOOL_KEY_PATTERN.test(key)) {
+        args[key] = parseComposerToolArgument(
+          trimmed.slice(delimiter + 1).trim()
+        );
+      }
+    }
   }
   return args;
 };
@@ -324,22 +360,15 @@ const parseComposerToolCallBody = function parseComposerToolCallBody(
     const inline = parseInlineToolCall(name);
     return inline ?? { arguments: {}, name };
   }
-  const args: Record<string, unknown> = {};
+  const args: JsonObject = {};
   for (const part of parts) {
     const trimmed = part.replace(LEADING_WHITESPACE_PATTERN, "");
-    if (!trimmed) {
-      continue;
+    const match = trimmed ? TOOL_PART_KEY_VALUE_PATTERN.exec(trimmed) : null;
+    const key = match?.groups?.key?.trim();
+    if (key) {
+      const rawValue = (match?.groups?.value || "").trim();
+      args[key] = parseComposerToolArgument(rawValue);
     }
-    const match = TOOL_PART_KEY_VALUE_PATTERN.exec(trimmed);
-    if (!match?.groups?.key) {
-      continue;
-    }
-    const key = match.groups.key.trim();
-    if (!key) {
-      continue;
-    }
-    const rawValue = (match.groups.value || "").trim();
-    args[key] = parseComposerToolArgument(rawValue);
   }
   return { arguments: args, name };
 };
@@ -356,11 +385,11 @@ const parseComposerToolCalls = function parseComposerToolCalls(
   const body = normalized.slice(beginIndex + TOOL_CALLS_BEGIN.length, endIndex);
   const calls: CursorToolCall[] = [];
   let offset = 0;
-  for (;;) {
-    const start = body.indexOf(TOOL_CALL_BEGIN, offset);
-    if (start === -1) {
-      break;
-    }
+  for (
+    let start = body.indexOf(TOOL_CALL_BEGIN, offset);
+    start !== -1;
+    start = body.indexOf(TOOL_CALL_BEGIN, offset)
+  ) {
     const contentStart = start + TOOL_CALL_BEGIN.length;
     const end = body.indexOf(TOOL_CALL_END, contentStart);
     if (end === -1) {
@@ -382,7 +411,7 @@ const findComposerToolMarker = function findComposerToolMarker(
   index: number;
   length: number;
 } | null {
-  const match = COMPOSER_TOOL_MARKER_PATTERN(marker).exec(value);
+  const match = composerToolMarkerPattern(marker).exec(value);
   return match ? { index: match.index, length: match[0].length } : null;
 };
 
@@ -461,60 +490,74 @@ const stripComposerControlTokens = function stripComposerControlTokens(
   );
 };
 
+const emitVisibleText = function emitVisibleText(
+  text: string,
+  events: ComposerToolMarkerEvent[]
+): void {
+  if (text.trim()) {
+    events.push({ text, type: "text" });
+  }
+};
+
 const createComposerToolCallFilter = function createComposerToolCallFilter() {
   let buffer = "";
+  const drainPlainText = function drainPlainText(
+    force: boolean,
+    events: ComposerToolMarkerEvent[]
+  ): boolean {
+    if (!buffer.trim()) {
+      if (force) {
+        buffer = "";
+      }
+      return buffer.length === 0;
+    }
+    const prefixIndex = force ? -1 : toolMarkerPrefixIndex(buffer);
+    if (prefixIndex !== -1) {
+      emitVisibleText(buffer.slice(0, prefixIndex), events);
+      buffer = buffer.slice(prefixIndex);
+      return buffer.length === 0;
+    }
+    emitVisibleText(buffer, events);
+    buffer = "";
+    return buffer.length === 0;
+  };
+  const drainToolBlock = function drainToolBlock(
+    begin: { index: number; length: number },
+    force: boolean,
+    events: ComposerToolMarkerEvent[]
+  ): boolean {
+    if (begin.index > 0) {
+      emitVisibleText(buffer.slice(0, begin.index), events);
+      buffer = buffer.slice(begin.index);
+      return true;
+    }
+    const end = findComposerToolMarker(
+      buffer.slice(begin.length),
+      "tool_calls_end"
+    );
+    if (!end) {
+      if (force) {
+        events.push({ text: buffer, type: "text" });
+        buffer = "";
+      }
+      return false;
+    }
+    const blockEnd = begin.length + end.index + end.length;
+    const block = buffer.slice(0, blockEnd);
+    for (const toolCall of parseComposerToolCalls(block)) {
+      events.push({ toolCall, type: "tool_call" });
+    }
+    buffer = buffer.slice(blockEnd).replace(LEADING_WHITESPACE_PATTERN, "");
+    return true;
+  };
   const drain = function drain(force: boolean): ComposerToolMarkerEvent[] {
     const events: ComposerToolMarkerEvent[] = [];
-    for (;;) {
+    let shouldContinue = true;
+    while (shouldContinue) {
       const begin = findComposerToolMarker(buffer, "tool_calls_begin");
-      if (!begin) {
-        if (!buffer.trim()) {
-          if (force) {
-            buffer = "";
-          }
-          break;
-        }
-        const prefixIndex = force ? -1 : toolMarkerPrefixIndex(buffer);
-        if (prefixIndex !== -1) {
-          const visible = buffer.slice(0, prefixIndex);
-          if (visible.trim()) {
-            events.push({ text: visible, type: "text" });
-          }
-          buffer = buffer.slice(prefixIndex);
-          break;
-        }
-        const visible = buffer;
-        if (visible) {
-          events.push({ text: visible, type: "text" });
-        }
-        buffer = "";
-        break;
-      }
-      if (begin.index > 0) {
-        const before = buffer.slice(0, begin.index);
-        if (before.trim()) {
-          events.push({ text: before, type: "text" });
-        }
-        buffer = buffer.slice(begin.index);
-        continue;
-      }
-      const end = findComposerToolMarker(
-        buffer.slice(begin.length),
-        "tool_calls_end"
-      );
-      if (!end) {
-        if (force) {
-          events.push({ text: buffer, type: "text" });
-          buffer = "";
-        }
-        break;
-      }
-      const blockEnd = begin.length + end.index + end.length;
-      const block = buffer.slice(0, blockEnd);
-      for (const toolCall of parseComposerToolCalls(block)) {
-        events.push({ toolCall, type: "tool_call" });
-      }
-      buffer = buffer.slice(blockEnd).replace(LEADING_WHITESPACE_PATTERN, "");
+      shouldContinue = begin
+        ? drainToolBlock(begin, force, events)
+        : drainPlainText(force, events);
     }
     return events;
   };
@@ -633,10 +676,11 @@ const parseCursorError = function parseCursorError(
   text: string
 ): string | undefined {
   try {
-    const payload = JSON.parse(text) as unknown;
-    if (isRecord(payload)) {
-      const error = isRecord(payload.error) ? payload.error : payload;
-      if (typeof error.message === "string") {
+    const payload: JsonValue = JSON.parse(text);
+    const object = asJsonObject(payload);
+    if (object) {
+      const error = asJsonObject(object.error ?? null) ?? object;
+      if (isString(error.message)) {
         return error.message;
       }
     }
@@ -662,7 +706,12 @@ const cursorPublicRaw = async function cursorPublicRaw(
   headers.set("x-ghost-mode", "true");
   const response = await deps.fetch(url, { ...init, headers });
   if (!response.ok) {
-    const text = await response.text().catch(() => "");
+    let text = "";
+    try {
+      text = await response.text();
+    } catch {
+      // Preserve the empty-body fallback when reading the error response fails.
+    }
     const message =
       response.status === 401
         ? "Invalid Cursor API key"
@@ -683,22 +732,52 @@ const cursorPublicJson = async function cursorPublicJson<T>(
   deps: Deps,
   apiKey: string,
   path: string,
+  parse: (value: JsonValue) => T,
   init: {
     method?: string;
     body?: unknown;
     idempotencyKey?: string;
   } = {}
 ): Promise<T> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...(init.idempotencyKey ? { "Idempotency-Key": init.idempotencyKey } : {}),
-  };
+  const headers = new Headers({ "Content-Type": "application/json" });
+  if (init.idempotencyKey) {
+    headers.set("Idempotency-Key", init.idempotencyKey);
+  }
   const response = await cursorPublicRaw(env, deps, apiKey, path, {
     body: init.body === undefined ? undefined : JSON.stringify(init.body),
     headers,
     method: init.method || "GET",
   });
-  return response.json() as Promise<T>;
+  const payload: JsonValue = JSON.parse(await response.text());
+  return parse(payload);
+};
+
+const parseCursorMe = function parseCursorMe(value: JsonValue): CursorMe {
+  const object = asJsonObject(value);
+  if (!object || !isString(object.apiKeyName) || !isString(object.createdAt)) {
+    throw new HttpError(
+      "Cursor returned an invalid account response",
+      502,
+      "cursor_bad_response"
+    );
+  }
+  const me: CursorMe = {
+    apiKeyName: object.apiKeyName,
+    createdAt: object.createdAt,
+  };
+  if (object.userId !== undefined && isNumber(object.userId)) {
+    me.userId = object.userId;
+  }
+  if (object.userEmail !== undefined && isString(object.userEmail)) {
+    me.userEmail = object.userEmail;
+  }
+  if (object.userFirstName !== undefined && isString(object.userFirstName)) {
+    me.userFirstName = object.userFirstName;
+  }
+  if (object.userLastName !== undefined && isString(object.userLastName)) {
+    me.userLastName = object.userLastName;
+  }
+  return me;
 };
 
 const verifyCursorApiKey = function verifyCursorApiKey(
@@ -706,25 +785,33 @@ const verifyCursorApiKey = function verifyCursorApiKey(
   deps: Deps,
   apiKey: string
 ): Promise<CursorMe> {
-  return cursorPublicJson<CursorMe>(env, deps, apiKey, "/v1/me");
+  return cursorPublicJson(env, deps, apiKey, "/v1/me", parseCursorMe);
 };
 
-export const resolveCursorModel = function resolveCursorModel(model: unknown):
+/**
+ * Resolve the requested model, using the default when none is provided.
+ * @param model - The requested model identifier.
+ * @returns The resolved model identifier, or `undefined` for invalid input.
+ */
+export const resolveCursorModel = function resolveCursorModel(
+  model: string | undefined
+):
   | {
       id: string;
     }
   | undefined {
-  if (typeof model !== "string" || !model.trim()) {
-    return { id: "composer-2.5" };
+  const defaultModelId = "composer-2.5";
+  if (!model?.trim()) {
+    return { id: defaultModelId };
   }
   const normalized = model.trim().toLowerCase();
   if (
-    normalized === "composer-2.5" ||
+    normalized === defaultModelId ||
     normalized === "composer-2-5" ||
     normalized === "composer-2.5-sdk" ||
     normalized === "composer-latest"
   ) {
-    return { id: "composer-2.5" };
+    return { id: defaultModelId };
   }
   if (
     normalized === "composer-2.5-fast" ||
@@ -733,7 +820,7 @@ export const resolveCursorModel = function resolveCursorModel(model: unknown):
     return { id: "composer-2.5-fast" };
   }
   if (normalized === "auto" || normalized === "default") {
-    return { id: "composer-2.5" };
+    return { id: defaultModelId };
   }
   return { id: model.trim() };
 };
@@ -802,9 +889,7 @@ const fetchImageBytes = async function fetchImageBytes(
 };
 
 const stableImageId = function stableImageId(index: number): string {
-  return typeof crypto.randomUUID === "function"
-    ? crypto.randomUUID()
-    : `image-${Date.now()}-${index}`;
+  return crypto.randomUUID?.() ?? `image-${Date.now()}-${index}`;
 };
 
 const resolveCursorImages = function resolveCursorImages(
@@ -833,13 +918,14 @@ const resolveCursorImages = function resolveCursorImages(
           "image"
         );
       }
-      return {
+      const encodedImage: EncodedCursorImage = {
         data,
         uuid: image.uuid || stableImageId(index),
-        ...("dimension" in image && image.dimension
-          ? { dimension: image.dimension }
-          : {}),
       };
+      if ("dimension" in image && image.dimension) {
+        encodedImage.dimension = image.dimension;
+      }
+      return encodedImage;
     })
   );
 };
@@ -867,7 +953,7 @@ const getCursorAccountIdentity = async function getCursorAccountIdentity(
   }
   const me = await verifyCursorApiKey(env, deps, apiKey);
   let identity = `cursor-key:${apiKeyHash}`;
-  if (typeof me.userId === "number") {
+  if (me.userId !== undefined) {
     identity = `cursor-user:${me.userId}`;
   } else if (me.userEmail) {
     identity = `cursor-email:${me.userEmail.trim().toLowerCase()}`;
@@ -877,6 +963,25 @@ const getCursorAccountIdentity = async function getCursorAccountIdentity(
     identity,
   });
   return identity;
+};
+
+const internalCursorErrorMessage = function internalCursorErrorMessage(
+  status: number
+): string {
+  if (status === 464) {
+    return "Cursor rejected the proxied chat request. The proxy request is valid, but Cursor refused this account/session.";
+  }
+  return `Cursor internal API request failed with status ${status}`;
+};
+
+const parseCursorAccessTokenResponse = function parseCursorAccessTokenResponse(
+  value: JsonValue
+): CursorAccessTokenResponse | undefined {
+  const object = asJsonObject(value);
+  if (!object || !isString(object.accessToken)) {
+    return undefined;
+  }
+  return { accessToken: object.accessToken };
 };
 
 const cursorInternalRaw = async function cursorInternalRaw(
@@ -894,22 +999,26 @@ const cursorInternalRaw = async function cursorInternalRaw(
       "cursor_missing_backend_url"
     );
   }
-  const url = ABSOLUTE_URL_PATTERN.test(path)
-    ? path
-    : `${base.replace(TRAILING_SLASH_PATTERN, "")}${path.startsWith("/") ? path : `/${path}`}`;
+  let url = path;
+  if (!ABSOLUTE_URL_PATTERN.test(path)) {
+    const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+    url = `${base.replace(TRAILING_SLASH_PATTERN, "")}${normalizedPath}`;
+  }
   const headers = new Headers(init.headers);
   headers.set("Authorization", `Bearer ${token}`);
   const response = await deps.fetch(url, { ...init, headers });
   if (!response.ok) {
-    const text = await response.text().catch(() => "");
+    let text = "";
+    try {
+      text = await response.text();
+    } catch {
+      // Preserve the empty-body fallback when reading the error response fails.
+    }
     const parsed = parseCursorError(text);
     const message =
       response.status === 401
         ? "Invalid Cursor API key"
-        : parsed ||
-          (response.status === 464
-            ? "Cursor rejected the proxied chat request. The proxy request is valid, but Cursor refused this account/session."
-            : `Cursor internal API request failed with status ${response.status}`);
+        : parsed || internalCursorErrorMessage(response.status);
     const status = mapCursorInternalHttpStatus(response.status);
     throw new HttpError(
       message,
@@ -920,6 +1029,13 @@ const cursorInternalRaw = async function cursorInternalRaw(
   return response;
 };
 
+/**
+ * Exchange a Cursor API key for an access token.
+ * @param env - The configured runtime environment.
+ * @param deps - Runtime dependencies used for the request.
+ * @param apiKey - The Cursor API key to exchange.
+ * @returns The exchanged access token.
+ */
 export const exchangeCursorApiKey = async function exchangeCursorApiKey(
   env: Env,
   deps: Deps,
@@ -936,15 +1052,17 @@ export const exchangeCursorApiKey = async function exchangeCursorApiKey(
       method: "POST",
     }
   );
-  const payload = (await response.json()) as CursorAccessTokenResponse;
-  if (!payload.accessToken) {
+  const payload: JsonValue = JSON.parse(await response.text());
+  const parsedPayload = parseCursorAccessTokenResponse(payload);
+  const accessToken = parsedPayload?.accessToken;
+  if (!accessToken) {
     throw new HttpError(
       "Cursor did not return an internal access token",
       502,
       "cursor_bad_response"
     );
   }
-  return payload.accessToken;
+  return accessToken;
 };
 
 const stableUuid = async function stableUuid(
@@ -997,16 +1115,12 @@ const protoField = function protoField(
 ): Uint8Array {
   const tag = encodeVarint(protoTag(fieldNumber, wireType));
   if (wireType === 0) {
-    return concatBytes(tag, encodeVarint(value as number));
+    return concatBytes(tag, encodeVarint(Number(value)));
   }
-  let bytes: Uint8Array;
-  if (typeof value === "string") {
-    bytes = new TextEncoder().encode(value);
-  } else if (value instanceof Uint8Array) {
-    bytes = value;
-  } else {
-    bytes = encodeVarint(value);
-  }
+  const bytes =
+    value instanceof Uint8Array
+      ? value
+      : new TextEncoder().encode(String(value));
   return concatBytes(tag, encodeVarint(bytes.length), bytes);
 };
 
@@ -1194,6 +1308,14 @@ const cursorInternalHeaders = async function cursorInternalHeaders(
   };
 };
 
+/**
+ * Create a Cursor completion stream for a prompt.
+ * @param env - The configured runtime environment.
+ * @param deps - Runtime dependencies used for network and time operations.
+ * @param apiKey - The Cursor API key for this request.
+ * @param input - The model and prompt to send.
+ * @returns Completion identifiers and the response stream.
+ */
 export const createCursorCompletion = async function createCursorCompletion(
   env: Env,
   deps: Deps,
@@ -1206,9 +1328,11 @@ export const createCursorCompletion = async function createCursorCompletion(
     conversationKey?: string;
   }
 ): Promise<CursorCompletion> {
-  const images = await resolveCursorImages(input.prompt.images ?? [], deps);
-  const cursorIdentity = await getCursorAccountIdentity(env, deps, apiKey);
-  const accessToken = await exchangeCursorApiKey(env, deps, apiKey);
+  const [images, cursorIdentity, accessToken] = await Promise.all([
+    resolveCursorImages(input.prompt.images ?? [], deps),
+    getCursorAccountIdentity(env, deps, apiKey),
+    exchangeCursorApiKey(env, deps, apiKey),
+  ]);
   const requestId = deps.randomUUID();
   const conversationId = input.conversationKey
     ? await stableUuid(
@@ -1232,7 +1356,7 @@ export const createCursorCompletion = async function createCursorCompletion(
     accessToken,
     cursorChatEndpoint(env),
     {
-      body: requestBody.buffer as ArrayBuffer,
+      body: new Uint8Array(requestBody).buffer,
       headers: await cursorInternalHeaders(
         env,
         accessToken,
@@ -1246,12 +1370,12 @@ export const createCursorCompletion = async function createCursorCompletion(
 };
 
 const legacyStreamResultText = function legacyStreamResultText(
-  payload: Record<string, unknown>
+  payload: JsonObject
 ): string {
-  if (typeof payload.result === "string") {
+  if (isString(payload.result)) {
     return payload.result;
   }
-  if (typeof payload.text === "string") {
+  if (isString(payload.text)) {
     return payload.text;
   }
   return "";
@@ -1264,26 +1388,21 @@ const yieldFlushedMarkerEvents = function* yieldFlushedMarkerEvents(
   for (const emitted of flushed) {
     if (emitted.type === "text") {
       state.text += emitted.text;
-      yield emitted;
     } else {
       state.toolCalls.push(emitted.toolCall);
-      yield emitted;
     }
+    yield emitted;
   }
 };
 
 const handleLegacyInteractionUpdate = function* handleLegacyInteractionUpdate(
-  payload: Record<string, unknown>,
-  state: {
-    text: string;
-    mode: "unknown" | "assistant" | "delta";
-    emit: (value: string) => Generator<CursorTextEvent>;
-  }
+  payload: JsonObject,
+  state: LegacyStreamState
 ): Generator<CursorTextEvent> {
   const { type } = payload;
   if (
     type === "text-delta" &&
-    typeof payload.text === "string" &&
+    isString(payload.text) &&
     state.mode !== "assistant"
   ) {
     state.mode = "delta";
@@ -1295,7 +1414,7 @@ const handleLegacyInteractionUpdate = function* handleLegacyInteractionUpdate(
   }
   if (
     type === "summary" &&
-    typeof payload.summary === "string" &&
+    isString(payload.summary) &&
     !state.text &&
     state.mode === "unknown"
   ) {
@@ -1303,25 +1422,31 @@ const handleLegacyInteractionUpdate = function* handleLegacyInteractionUpdate(
   }
 };
 
+interface LegacyStreamState {
+  text: string;
+  mode: "unknown" | "assistant" | "delta";
+  emit: (value: string) => Generator<CursorTextEvent>;
+}
+
+interface LegacySseState extends LegacyStreamState {
+  toolCalls: CursorToolCall[];
+  toolMarkers: ReturnType<typeof createComposerToolCallFilter>;
+}
+
+const CURSOR_STREAM_FAILURE_MESSAGE = "Cursor stream failed";
+
 const handleLegacySsePayload = function* handleLegacySsePayload(
   eventName: string,
-  payload: unknown,
-  state: {
-    text: string;
-    toolCalls: CursorToolCall[];
-    mode: "unknown" | "assistant" | "delta";
-    emit: (value: string) => Generator<CursorTextEvent>;
-    toolMarkers: ReturnType<typeof createComposerToolCallFilter>;
-  }
+  payload: JsonObject,
+  state: LegacySseState
 ): Generator<CursorTextEvent, "continue" | "done"> {
-  if (eventName === "interaction_update" && isRecord(payload)) {
+  if (eventName === "interaction_update") {
     yield* handleLegacyInteractionUpdate(payload, state);
     return "continue";
   }
   if (
     eventName === "assistant" &&
-    isRecord(payload) &&
-    typeof payload.text === "string" &&
+    isString(payload.text) &&
     state.mode !== "delta"
   ) {
     state.mode = "assistant";
@@ -1331,7 +1456,7 @@ const handleLegacySsePayload = function* handleLegacySsePayload(
     }
     return "continue";
   }
-  if (eventName === "result" && isRecord(payload)) {
+  if (eventName === "result") {
     const result = stripComposerControlTokens(legacyStreamResultText(payload));
     if (!state.text && result) {
       yield* state.emit(result);
@@ -1340,11 +1465,10 @@ const handleLegacySsePayload = function* handleLegacySsePayload(
     yield { finalText: state.text, toolCalls: state.toolCalls, type: "done" };
     return "done";
   }
-  if (eventName === "error" && isRecord(payload)) {
-    const message =
-      typeof payload.message === "string"
-        ? payload.message
-        : "Cursor stream failed";
+  if (eventName === "error") {
+    const message = isString(payload.message)
+      ? payload.message
+      : CURSOR_STREAM_FAILURE_MESSAGE;
     throw new HttpError(message, 502, "cursor_stream_error");
   }
   return "continue";
@@ -1354,45 +1478,43 @@ const streamLegacyAgentText = async function* streamLegacyAgentText(
   response: Response
 ): AsyncGenerator<CursorTextEvent> {
   const toolMarkers = createComposerToolCallFilter();
-  const state = {
+  const state: LegacySseState = {
     emit(value: string): Generator<CursorTextEvent> {
       return (function* emitGenerator() {
         for (const event of toolMarkers.push(value)) {
           if (event.type === "text") {
             state.text += event.text;
-            yield event;
           } else {
             state.toolCalls.push(event.toolCall);
-            yield event;
           }
+          yield event;
         }
       })();
     },
-    mode: "unknown" as "unknown" | "assistant" | "delta",
+    mode: "unknown",
     text: "",
-    toolCalls: [] as CursorToolCall[],
+    toolCalls: [],
     toolMarkers,
   };
   for await (const event of parseSse(response.body)) {
-    if (event.event === "done") {
-      break;
-    }
-    if (!event.data) {
-      continue;
-    }
-    let payload: unknown;
-    try {
-      payload = JSON.parse(event.data);
-    } catch {
-      continue;
-    }
-    const outcome = yield* handleLegacySsePayload(
-      event.event ?? "",
-      payload,
-      state
-    );
-    if (outcome === "done") {
-      return;
+    if (event.event !== "done" && event.data) {
+      let payload: JsonValue = null;
+      try {
+        payload = JSON.parse(event.data);
+      } catch {
+        payload = null;
+      }
+      const record = asJsonObject(payload);
+      if (record) {
+        const outcome = yield* handleLegacySsePayload(
+          event.event ?? "",
+          record,
+          state
+        );
+        if (outcome === "done") {
+          return;
+        }
+      }
     }
   }
   yield* yieldFlushedMarkerEvents(toolMarkers.flush(), state);
@@ -1404,20 +1526,22 @@ const decodeUtf8 = function decodeUtf8(bytes: Uint8Array): string {
 };
 
 const detailFromCursorError = function detailFromCursorError(
-  error: Record<string, unknown>
+  error: JsonObject
 ): string | undefined {
   const details = Array.isArray(error.details) ? error.details : [];
   for (const detail of details) {
-    if (!isRecord(detail) || !isRecord(detail.debug)) {
+    if (!isJsonObject(detail) || !isJsonObject(detail.debug)) {
       continue;
     }
-    const debugDetails = isRecord(detail.debug.details)
+    const debugDetails = isJsonObject(detail.debug.details)
       ? detail.debug.details
       : undefined;
+    const titleValue = debugDetails?.title;
     const title =
-      typeof debugDetails?.title === "string" ? debugDetails.title : "";
+      titleValue !== undefined && isString(titleValue) ? titleValue : "";
+    const bodyValue = debugDetails?.detail;
     const body =
-      typeof debugDetails?.detail === "string" ? debugDetails.detail : "";
+      bodyValue !== undefined && isString(bodyValue) ? bodyValue : "";
     const message = [title, body].filter(Boolean).join(" ");
     if (message) {
       return message;
@@ -1427,16 +1551,13 @@ const detailFromCursorError = function detailFromCursorError(
 };
 
 const cursorStreamErrorMessage = function cursorStreamErrorMessage(
-  error: unknown
+  error: JsonObject
 ): string | undefined {
-  if (!isRecord(error)) {
-    return undefined;
-  }
   const titleAndDetail = detailFromCursorError(error);
   if (titleAndDetail) {
     return titleAndDetail;
   }
-  return typeof error.message === "string" ? error.message : undefined;
+  return isString(error.message) ? error.message : undefined;
 };
 
 const handleEndStreamFrame = function handleEndStreamFrame(
@@ -1450,10 +1571,12 @@ const handleEndStreamFrame = function handleEndStreamFrame(
     return;
   }
   try {
-    const parsed = JSON.parse(text) as unknown;
-    if (isRecord(parsed) && isRecord(parsed.error)) {
+    const parsed: JsonValue = JSON.parse(text);
+    const parsedRecord = asJsonObject(parsed);
+    const parsedError = parsedRecord && asJsonObject(parsedRecord.error);
+    if (parsedError) {
       const message =
-        cursorStreamErrorMessage(parsed.error) || "Cursor stream failed";
+        cursorStreamErrorMessage(parsedError) || CURSOR_STREAM_FAILURE_MESSAGE;
       throw new HttpError(message, 502, "cursor_stream_error");
     }
   } catch (error) {
@@ -1529,10 +1652,7 @@ const parseConnectProtoFrames = async function* parseConnectProtoFrames(
 const readVarint = function readVarint(
   bytes: Uint8Array,
   startOffset: number
-): {
-  value: number;
-  offset: number;
-} {
+): VarintRead {
   let value = 0;
   let shift = 0;
   let offset = startOffset;
@@ -1547,6 +1667,11 @@ const readVarint = function readVarint(
   }
   throw new Error("Unexpected end of protobuf varint");
 };
+
+interface VarintRead {
+  value: number;
+  offset: number;
+}
 
 const decodeProtobufFields = function decodeProtobufFields(
   bytes: Uint8Array
@@ -1594,10 +1719,7 @@ const decodeBinaryToolCall = function decodeBinaryToolCall(
 
 const decodeChatMessageFields = function decodeChatMessageFields(
   fieldValue: Uint8Array
-): {
-  text: string;
-  thinking: string;
-} {
+): ChatMessageFields {
   let text = "";
   let thinking = "";
   for (const inner of decodeProtobufFields(fieldValue)) {
@@ -1623,36 +1745,24 @@ const decodeChatMessageFields = function decodeChatMessageFields(
   return { text, thinking };
 };
 
+interface ChatMessageFields {
+  text: string;
+  thinking: string;
+}
+
 const decodeCursorChatFrame = function decodeCursorChatFrame(
   payload: Uint8Array
-):
-  | {
-      type: "text";
-      text: string;
-    }
-  | {
-      type: "thinking";
-      text: string;
-    }
-  | {
-      type: "tool_call";
-      toolCall?: CursorToolCall;
-    }
-  | {
-      type: "ignore";
-    }
-  | {
-      type: "error";
-      message: string;
-    } {
+): DecodedCursorChatFrame {
   try {
     for (const field of decodeProtobufFields(payload)) {
       if (field.no === 1) {
+        const decodedToolCall =
+          field.value instanceof Uint8Array
+            ? decodeBinaryToolCall(field.value)
+            : {};
         return {
           type: "tool_call",
-          ...(field.value instanceof Uint8Array
-            ? decodeBinaryToolCall(field.value)
-            : {}),
+          ...decodedToolCall,
         };
       }
       if (
@@ -1682,6 +1792,78 @@ const decodeCursorChatFrame = function decodeCursorChatFrame(
   }
 };
 
+interface DecodedCursorChatFrame {
+  type: string;
+  message?: string;
+  text?: string;
+  toolCall?: CursorToolCall;
+}
+
+interface CursorStreamState {
+  text: string;
+  toolCalls: CursorToolCall[];
+}
+
+const yieldCursorMarkerEvents = function* yieldCursorMarkerEvents(
+  events: ComposerToolMarkerEvent[],
+  state: CursorStreamState
+): Generator<CursorTextEvent> {
+  for (const event of events) {
+    if (event.type === "text") {
+      state.text += event.text;
+    } else {
+      state.toolCalls.push(event.toolCall);
+    }
+    yield event;
+  }
+};
+
+const emitCursorText = function* emitCursorText(
+  value: string,
+  output: ReturnType<typeof createComposerOutputFilter>,
+  toolMarkers: ReturnType<typeof createComposerToolCallFilter>,
+  state: CursorStreamState
+): Generator<CursorTextEvent> {
+  for (const delta of output.push(value)) {
+    yield* yieldCursorMarkerEvents(toolMarkers.push(delta), state);
+  }
+};
+
+const handleDecodedCursorFrame = function* handleDecodedCursorFrame(
+  event: DecodedCursorChatFrame,
+  thinking: ReturnType<typeof createThinkingTextExtractor>,
+  emit: (value: string) => Generator<CursorTextEvent>,
+  state: CursorStreamState
+): Generator<CursorTextEvent> {
+  if (event.type === "error") {
+    throw new HttpError(
+      event.message ?? CURSOR_STREAM_FAILURE_MESSAGE,
+      502,
+      "cursor_stream_error"
+    );
+  }
+  if (event.type === "tool_call") {
+    if (event.toolCall) {
+      state.toolCalls.push(event.toolCall);
+      yield { toolCall: event.toolCall, type: "tool_call" };
+    }
+    return;
+  }
+  if (event.type === "text" && event.text) {
+    yield* emit(event.text);
+  }
+  if (event.type === "thinking" && event.text) {
+    for (const delta of thinking.push(event.text)) {
+      yield* emit(delta);
+    }
+  }
+};
+
+/**
+ * Decode the response into text and tool-call events.
+ * @param response - The Cursor completion response.
+ * @returns Events decoded from the response stream.
+ */
 export const streamCursorText = async function* streamCursorText(
   response: Response
 ): AsyncGenerator<CursorTextEvent> {
@@ -1690,72 +1872,36 @@ export const streamCursorText = async function* streamCursorText(
     yield* streamLegacyAgentText(response);
     return;
   }
-  let text = "";
-  const toolCalls: CursorToolCall[] = [];
+  const state: CursorStreamState = { text: "", toolCalls: [] };
   const thinking = createThinkingTextExtractor();
   const output = createComposerOutputFilter();
   const toolMarkers = createComposerToolCallFilter();
-  const emit = function* emit(value: string): Generator<CursorTextEvent> {
-    for (const delta of output.push(value)) {
-      for (const event of toolMarkers.push(delta)) {
-        if (event.type === "text") {
-          text += event.text;
-          yield event;
-        } else {
-          toolCalls.push(event.toolCall);
-          yield event;
-        }
-      }
-    }
-  };
+  const emit = (value: string) =>
+    emitCursorText(value, output, toolMarkers, state);
   for await (const frame of parseConnectProtoFrames(response.body)) {
-    const event = decodeCursorChatFrame(frame);
-    if (event.type === "error") {
-      throw new HttpError(event.message, 502, "cursor_stream_error");
-    }
-    if (event.type === "tool_call") {
-      if (event.toolCall) {
-        toolCalls.push(event.toolCall);
-        yield { toolCall: event.toolCall, type: "tool_call" };
-      }
-      continue;
-    }
-    if (event.type === "text" && event.text) {
-      yield* emit(event.text);
-    }
-    if (event.type === "thinking" && event.text) {
-      for (const delta of thinking.push(event.text)) {
-        yield* emit(delta);
-      }
-    }
+    yield* handleDecodedCursorFrame(
+      decodeCursorChatFrame(frame),
+      thinking,
+      emit,
+      state
+    );
   }
   const flushed = thinking.flush();
   if (flushed) {
     yield* emit(flushed);
   }
   for (const delta of output.flush()) {
-    for (const event of toolMarkers.push(delta)) {
-      if (event.type === "text") {
-        text += event.text;
-        yield event;
-      } else {
-        toolCalls.push(event.toolCall);
-        yield event;
-      }
-    }
+    yield* yieldCursorMarkerEvents(toolMarkers.push(delta), state);
   }
-  for (const event of toolMarkers.flush()) {
-    if (event.type === "text") {
-      text += event.text;
-      yield event;
-    } else {
-      toolCalls.push(event.toolCall);
-      yield event;
-    }
-  }
-  yield { finalText: text, toolCalls, type: "done" };
+  yield* yieldCursorMarkerEvents(toolMarkers.flush(), state);
+  yield { finalText: state.text, toolCalls: state.toolCalls, type: "done" };
 };
 
+/**
+ * Collect the text and tool calls from a Cursor completion response.
+ * @param response - The Cursor completion response.
+ * @returns The collected text and tool calls.
+ */
 export const collectCursorOutput = async function collectCursorOutput(
   response: Response
 ): Promise<CursorCollectedOutput> {

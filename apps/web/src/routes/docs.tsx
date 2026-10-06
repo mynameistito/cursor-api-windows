@@ -8,31 +8,42 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const installCommand =
   "irm https://cursor-api-windows.mynameistito.com/install.ps1 | iex";
+const apiKeyValue = "cursor-local";
+const baseUrlValue = "http://127.0.0.1:6903/v1";
+const primaryModel = "composer-2.5";
+const fastModel = "composer-2.5-fast";
+const startCommand = "cursor-api start";
+const healthCommand = "cursor-api health";
+const healthyStatus = "healthy";
+const openAiCompatibleProvider = "OpenAI compatible";
+const configGroup = "Config";
+const opsGroup = "Ops";
+const serverGroup = "Server";
 
 const setupSteps = [
   ["Install", installCommand],
   ["Save your Cursor key", "cursor-api key set"],
-  ["Start the daemon", "cursor-api start"],
-  ["Verify the server", "cursor-api health"],
+  ["Start the daemon", startCommand],
+  ["Verify the server", healthCommand],
   ["Copy the base URL", "cursor-api url"],
 ] as const;
 
 const commandGroups = {
-  Config: [
+  [configGroup]: [
     "cursor-api key set",
     "cursor-api key status",
     "cursor-api port show",
     "cursor-api port set <port>",
     "cursor-api configure agent opencode",
   ],
-  Ops: [
-    "cursor-api health",
+  [opsGroup]: [
+    healthCommand,
     "cursor-api url",
     "cursor-api update check",
     "cursor-api update install",
   ],
-  Server: [
-    "cursor-api start",
+  [serverGroup]: [
+    startCommand,
     "cursor-api stop",
     "cursor-api restart",
     "cursor-api status",
@@ -53,10 +64,10 @@ const endpointRows = [
 ] as const;
 
 const clientRows = [
-  ["Base URL", "http://127.0.0.1:6903/v1"],
-  ["API key", "cursor-local"],
-  ["Primary model", "composer-2.5"],
-  ["Fast model", "composer-2.5-fast"],
+  ["Base URL", baseUrlValue],
+  ["API key", apiKeyValue],
+  ["Primary model", primaryModel],
+  ["Fast model", fastModel],
   ["Bind address", "127.0.0.1"],
   ["Default port", "6903"],
 ] as const;
@@ -73,17 +84,17 @@ const agentSetupRows = [
     ],
     settings: [
       ["Provider", "OpenAI-compatible local provider"],
-      ["Base URL", "http://127.0.0.1:6903/v1"],
-      ["API key", "cursor-local"],
-      ["Models", "composer-2.5, composer-2.5-fast"],
+      ["Base URL", baseUrlValue],
+      ["API key", apiKeyValue],
+      ["Models", `${primaryModel}, ${fastModel}`],
     ],
     steps: [
-      ["Start the daemon", "cursor-api start"],
+      ["Start the daemon", startCommand],
       ["Write OpenCode config", "cursor-api configure agent opencode"],
-      ["Check the endpoint", "cursor-api health"],
+      ["Check the endpoint", healthCommand],
       [
         "Use the model",
-        "Select composer-2.5-fast for quick edits or composer-2.5 for deeper runs.",
+        `Select ${fastModel} for quick edits or ${primaryModel} for deeper runs.`,
       ],
     ],
   },
@@ -97,22 +108,22 @@ const agentSetupRows = [
       "If Codex shows connection errors, verify the daemon URL with cursor-api url.",
     ],
     settings: [
-      ["Provider type", "OpenAI compatible"],
-      ["Base URL", "http://127.0.0.1:6903/v1"],
-      ["API key", "cursor-local"],
-      ["Default model", "composer-2.5-fast"],
+      ["Provider type", openAiCompatibleProvider],
+      ["Base URL", baseUrlValue],
+      ["API key", apiKeyValue],
+      ["Default model", fastModel],
     ],
     steps: [
       [
         "Open provider settings",
         "Create or edit a custom OpenAI-compatible provider.",
       ],
-      ["Set the base URL", "http://127.0.0.1:6903/v1"],
-      ["Set the key", "cursor-local"],
-      ["Set the model", "composer-2.5-fast"],
+      ["Set the base URL", baseUrlValue],
+      ["Set the key", apiKeyValue],
+      ["Set the model", fastModel],
       [
         "Validate",
-        "Send a short prompt after cursor-api health returns healthy.",
+        `Send a short prompt after cursor-api health returns ${healthyStatus}.`,
       ],
     ],
   },
@@ -127,18 +138,18 @@ const agentSetupRows = [
     ],
     settings: [
       ["Provider", "Custom OpenAI-compatible"],
-      ["Base URL", "http://127.0.0.1:6903/v1"],
-      ["API key", "cursor-local"],
-      ["Model", "composer-2.5-fast"],
+      ["Base URL", baseUrlValue],
+      ["API key", apiKeyValue],
+      ["Model", fastModel],
     ],
     steps: [
       [
         "Open model settings",
         "Choose the custom provider or OpenAI-compatible option.",
       ],
-      ["Paste endpoint", "http://127.0.0.1:6903/v1"],
-      ["Paste key", "cursor-local"],
-      ["Choose model", "composer-2.5-fast"],
+      ["Paste endpoint", baseUrlValue],
+      ["Paste key", apiKeyValue],
+      ["Choose model", fastModel],
       ["Troubleshoot", "Run cursor-api logs -f while sending a Pi request."],
     ],
   },
@@ -152,20 +163,20 @@ const agentSetupRows = [
       "If model discovery is not automatic, enter both Composer model names manually.",
     ],
     settings: [
-      ["Provider", "OpenAI compatible"],
-      ["Base URL", "http://127.0.0.1:6903/v1"],
-      ["API key", "cursor-local"],
-      ["Fast model", "composer-2.5-fast"],
-      ["Full model", "composer-2.5"],
+      ["Provider", openAiCompatibleProvider],
+      ["Base URL", baseUrlValue],
+      ["API key", apiKeyValue],
+      ["Fast model", fastModel],
+      ["Full model", primaryModel],
     ],
     steps: [
       [
         "Create provider",
         "Add a custom OpenAI-compatible provider in Kilo Code.",
       ],
-      ["Configure endpoint", "http://127.0.0.1:6903/v1"],
-      ["Configure key", "cursor-local"],
-      ["Add models", "composer-2.5-fast and composer-2.5"],
+      ["Configure endpoint", baseUrlValue],
+      ["Configure key", apiKeyValue],
+      ["Add models", `${fastModel} and ${primaryModel}`],
       ["Confirm", "Run cursor-api status before starting an agent task."],
     ],
   },
@@ -179,16 +190,16 @@ const agentSetupRows = [
       "If you prefer one-off runs, pass the same values as environment variables or CLI flags.",
     ],
     settings: [
-      ["OpenAI base URL", "http://127.0.0.1:6903/v1"],
-      ["OpenAI API key", "cursor-local"],
-      ["Default model", "composer-2.5-fast"],
-      ["Alternative model", "composer-2.5"],
+      ["OpenAI base URL", baseUrlValue],
+      ["OpenAI API key", apiKeyValue],
+      ["Default model", fastModel],
+      ["Alternative model", primaryModel],
     ],
     steps: [
-      ["Start daemon", "cursor-api start"],
-      ["Set base URL", "http://127.0.0.1:6903/v1"],
-      ["Set API key", "cursor-local"],
-      ["Set default model", "composer-2.5-fast"],
+      ["Start daemon", startCommand],
+      ["Set base URL", baseUrlValue],
+      ["Set API key", apiKeyValue],
+      ["Set default model", fastModel],
       ["Verify", "Ask Aider for a small repository summary."],
     ],
   },
@@ -202,16 +213,16 @@ const agentSetupRows = [
       "Use cursor-api logs -f when an extension hides provider errors.",
     ],
     settings: [
-      ["Provider type", "OpenAI compatible"],
-      ["Base URL", "http://127.0.0.1:6903/v1"],
-      ["API key", "cursor-local"],
-      ["Model", "composer-2.5-fast"],
+      ["Provider type", openAiCompatibleProvider],
+      ["Base URL", baseUrlValue],
+      ["API key", apiKeyValue],
+      ["Model", fastModel],
     ],
     steps: [
       ["Open extension settings", "Find provider, model, or API settings."],
       ["Choose custom provider", "Select OpenAI-compatible if available."],
-      ["Save endpoint", "http://127.0.0.1:6903/v1"],
-      ["Save key", "cursor-local"],
+      ["Save endpoint", baseUrlValue],
+      ["Save key", apiKeyValue],
       [
         "Test request",
         "Use the extension while cursor-api logs -f is running.",
@@ -333,7 +344,8 @@ const CopyButton = ({ value }: { value: string }) => {
 
   return (
     <button
-      className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 font-medium text-[0.68rem] text-muted-foreground opacity-100 shadow-[var(--shadow-card)] transition hover:text-foreground focus-visible:shadow-[var(--focus-ring)] sm:opacity-0 sm:group-hover:opacity-100"
+      aria-label={copied ? "Copied to clipboard" : "Copy code"}
+      className="border-border bg-background text-muted-foreground hover:text-foreground focus-visible:text-foreground absolute top-2 right-2 inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium opacity-100 shadow-sm transition sm:opacity-0 sm:group-hover:opacity-100"
       onClick={copyValue}
       type="button"
     >
@@ -353,7 +365,7 @@ const CodeBlock = ({
   <div className="group relative">
     <CopyButton value={value} />
     <pre
-      className={`overflow-x-auto rounded-lg border border-border bg-[var(--geist-gray-alpha-100)] p-4 pr-20 font-mono text-xs leading-6 text-foreground ${className}`}
+      className={`border-border text-foreground bg-muted overflow-x-auto rounded-lg border p-4 pr-20 font-mono text-xs leading-6 ${className}`}
     >
       <code>{value}</code>
     </pre>
@@ -369,8 +381,8 @@ const RequestExampleCard = ({
   title: string;
   value: string;
 }) => (
-  <div className="flex h-full flex-col text-sm leading-7 text-muted-foreground">
-    <h3 className="mb-3 text-base font-semibold text-foreground">{title}</h3>
+  <div className="text-muted-foreground flex h-full flex-col text-sm leading-7">
+    <h3 className="text-foreground mb-3 text-base font-semibold">{title}</h3>
     <div className="mb-5 min-h-20">{children}</div>
     <div className="mt-auto">
       <CodeBlock className="min-h-[21rem]" value={value} />
@@ -379,15 +391,15 @@ const RequestExampleCard = ({
 );
 
 const Step = ({ label, command }: { label: string; command: string }) => (
-  <div className="rounded-lg border border-border bg-background p-3 shadow-[var(--shadow-card)]">
-    <div className="mb-2 text-sm font-medium text-foreground">{label}</div>
+  <div className="border-border bg-background rounded-lg border p-3 shadow-sm">
+    <div className="text-foreground mb-2 text-sm font-medium">{label}</div>
     <CodeBlock value={command} />
   </div>
 );
 
 const AvailablePill = () => (
-  <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-[var(--geist-green-100)] px-2 py-1 font-medium text-[0.68rem] text-[var(--geist-green-700)]">
-    <span className="status-pulse size-1.5 rounded-full bg-[var(--geist-green-700)]" />
+  <span className="border-border text-primary bg-muted inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium">
+    <span className="status-pulse bg-primary size-1.5 rounded-full" />
     Available
   </span>
 );
@@ -399,13 +411,13 @@ const AgentSetupCard = ({
   settings,
   steps,
 }: (typeof agentSetupRows)[number]) => (
-  <section className="scroll-mt-24 border-b border-border py-8 last:border-b-0">
+  <section className="border-border scroll-mt-24 border-b py-8 last:border-b-0">
     <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
       <div>
-        <h3 className="mb-2 text-xl font-semibold tracking-[-0.03em] text-foreground">
+        <h3 className="text-foreground mb-2 text-xl font-semibold tracking-tight">
           {name}
         </h3>
-        <p className="m-0 max-w-3xl text-sm leading-7 text-muted-foreground">
+        <p className="text-muted-foreground m-0 max-w-3xl text-sm leading-7">
           {description}
         </p>
       </div>
@@ -415,19 +427,19 @@ const AgentSetupCard = ({
     <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_16rem]">
       <div className="min-w-0 space-y-7">
         <div>
-          <h4 className="mb-3 text-base font-semibold tracking-[-0.02em] text-foreground">
+          <h4 className="text-foreground mb-3 text-base font-semibold tracking-tight">
             Required settings
           </h4>
-          <div className="overflow-hidden rounded-lg border border-border">
+          <div className="border-border overflow-hidden rounded-lg border">
             {settings.map(([label, value]) => (
               <div
-                className="grid gap-1 border-b border-border px-3 py-2.5 last:border-b-0 sm:grid-cols-[10rem_1fr]"
+                className="border-border grid gap-1 border-b px-3 py-2.5 last:border-b-0 sm:grid-cols-[10rem_1fr]"
                 key={label}
               >
                 <span className="text-muted-foreground text-sm leading-6">
                   {label}
                 </span>
-                <code className="break-all border-0 bg-transparent p-0 font-mono text-xs leading-6 text-foreground">
+                <code className="text-foreground border-0 bg-transparent p-0 font-mono text-xs leading-6 break-all">
                   {value}
                 </code>
               </div>
@@ -436,24 +448,24 @@ const AgentSetupCard = ({
         </div>
 
         <div>
-          <h4 className="mb-3 text-base font-semibold tracking-[-0.02em] text-foreground">
+          <h4 className="text-foreground mb-3 text-base font-semibold tracking-tight">
             Setup steps
           </h4>
           <ol className="m-0 space-y-4 p-0">
             {steps.map(([label, value], index) => (
               <li className="grid grid-cols-[1.75rem_1fr] gap-3" key={label}>
-                <span className="mt-0.5 flex size-7 items-center justify-center rounded-full border border-border bg-background font-mono text-[0.7rem] text-muted-foreground">
+                <span className="border-border bg-background text-muted-foreground mt-0.5 flex size-7 items-center justify-center rounded-full border font-mono text-xs">
                   {index + 1}
                 </span>
                 <div className="min-w-0">
-                  <div className="mb-1 text-sm font-medium text-foreground">
+                  <div className="text-foreground mb-1 text-sm font-medium">
                     {label}
                   </div>
                   {value.startsWith("cursor-api") ||
                   value.startsWith("http") ? (
                     <CodeBlock value={value} />
                   ) : (
-                    <p className="m-0 text-sm leading-7 text-muted-foreground">
+                    <p className="text-muted-foreground m-0 text-sm leading-7">
                       {value}
                     </p>
                   )}
@@ -464,17 +476,17 @@ const AgentSetupCard = ({
         </div>
       </div>
 
-      <aside className="lg:border-l lg:border-border lg:pl-5">
-        <h4 className="mb-3 text-base font-semibold tracking-[-0.02em] text-foreground">
+      <aside className="lg:border-border lg:border-l lg:pl-5">
+        <h4 className="text-foreground mb-3 text-base font-semibold tracking-tight">
           Notes
         </h4>
         <ul className="m-0 space-y-3 p-0">
           {notes.map((note) => (
             <li
-              className="grid grid-cols-[0.75rem_1fr] gap-2 text-sm leading-7 text-muted-foreground"
+              className="text-muted-foreground grid grid-cols-[0.75rem_1fr] gap-2 text-sm leading-7"
               key={note}
             >
-              <span className="mt-2 size-1.5 rounded-full bg-[var(--geist-blue-700)]" />
+              <span className="bg-primary mt-2 size-1.5 rounded-full" />
               <span>{note}</span>
             </li>
           ))}
@@ -487,12 +499,12 @@ const AgentSetupCard = ({
 const DocsRail = () => (
   <aside className="hidden xl:block">
     <div className="sticky top-24 space-y-5">
-      <div className="rounded-xl border border-border bg-background p-4 shadow-[var(--shadow-card)]">
-        <p className="mb-3 font-medium text-foreground text-sm">On this page</p>
+      <div className="border-border bg-background rounded-xl border p-4 shadow-sm">
+        <p className="text-foreground mb-3 text-sm font-medium">On this page</p>
         <nav className="space-y-1 text-sm">
           {rightRailLinks.map(([label, href]) => (
             <a
-              className="block rounded-md px-2 py-1.5 text-muted-foreground no-underline hover:bg-muted hover:text-foreground"
+              className="text-muted-foreground hover:bg-muted hover:text-foreground block rounded-md px-2 py-1.5 no-underline"
               href={href}
               key={href}
             >
@@ -502,23 +514,23 @@ const DocsRail = () => (
         </nav>
       </div>
 
-      <div className="rounded-xl border border-[color-mix(in_oklab,var(--geist-blue-700)_24%,var(--border))] bg-[color-mix(in_oklab,var(--geist-blue-700)_7%,var(--background))] p-4 text-sm leading-6 text-muted-foreground">
-        <p className="mb-2 font-medium text-foreground">Local defaults</p>
+      <div className="text-muted-foreground border-border bg-muted rounded-xl border p-4 text-sm leading-6">
+        <p className="text-foreground mb-2 font-medium">Local defaults</p>
         <div className="space-y-2">
           <div>
-            <span className="block text-xs text-muted-foreground">
+            <span className="text-muted-foreground block text-xs">
               Base URL
             </span>
-            <code className="break-all font-mono text-xs">
+            <code className="font-mono text-xs break-all">
               http://127.0.0.1:6903/v1
             </code>
           </div>
           <div>
-            <span className="block text-xs text-muted-foreground">API key</span>
+            <span className="text-muted-foreground block text-xs">API key</span>
             <code className="font-mono text-xs">cursor-local</code>
           </div>
           <div>
-            <span className="block text-xs text-muted-foreground">
+            <span className="text-muted-foreground block text-xs">
               Fast model
             </span>
             <code className="font-mono text-xs">composer-2.5-fast</code>
@@ -532,12 +544,12 @@ const DocsRail = () => (
 const DocsSidebar = () => (
   <aside className="hidden lg:block">
     <nav className="sticky top-24 space-y-1 text-sm">
-      <p className="mb-3 font-mono text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
+      <p className="text-muted-foreground mb-3 font-mono text-xs font-medium tracking-widest uppercase">
         Docs
       </p>
       {docsNav.map(([label, href]) => (
         <a
-          className="block rounded-md px-2 py-1.5 text-muted-foreground no-underline hover:bg-muted hover:text-foreground"
+          className="text-muted-foreground hover:bg-muted hover:text-foreground block rounded-md px-2 py-1.5 no-underline"
           href={href}
           key={href}
         >
@@ -549,9 +561,9 @@ const DocsSidebar = () => (
 );
 
 const DocsIntroCard = () => (
-  <div className="rounded-xl border border-border bg-background p-4 shadow-[var(--shadow-card)] sm:p-5">
+  <div className="border-border bg-background rounded-xl border p-4 shadow-sm sm:p-5">
     <div className="mb-3 flex items-center justify-between gap-3">
-      <h3 className="m-0 text-base font-semibold tracking-[-0.02em] text-foreground">
+      <h3 className="text-foreground m-0 text-base font-semibold tracking-tight">
         Quick reference
       </h3>
       <AvailablePill />
@@ -559,8 +571,8 @@ const DocsIntroCard = () => (
     <div className="space-y-3">
       {clientRows.slice(0, 4).map(([label, value]) => (
         <div key={label}>
-          <div className="mb-1 text-muted-foreground text-xs">{label}</div>
-          <code className="break-all font-mono text-xs leading-5">{value}</code>
+          <div className="text-muted-foreground mb-1 text-xs">{label}</div>
+          <code className="font-mono text-xs leading-5 break-all">{value}</code>
         </div>
       ))}
     </div>
@@ -568,9 +580,9 @@ const DocsIntroCard = () => (
 );
 
 const Detail = ({ label, value }: { label: string; value: string }) => (
-  <div className="grid gap-1 border-b border-border py-3 last:border-b-0 sm:grid-cols-[12rem_1fr] sm:gap-4">
-    <div className="text-sm font-medium text-foreground">{label}</div>
-    <code className="break-all font-mono text-xs leading-6 text-muted-foreground">
+  <div className="border-border grid gap-1 border-b py-3 last:border-b-0 sm:grid-cols-[12rem_1fr] sm:gap-4">
+    <div className="text-foreground text-sm font-medium">{label}</div>
+    <code className="text-muted-foreground font-mono text-xs leading-6 break-all">
       {value}
     </code>
   </div>
@@ -584,10 +596,10 @@ const SectionHeading = ({
   title: string;
 }) => (
   <div className="mb-5">
-    <h2 className="mb-2 text-2xl font-semibold tracking-[-0.03em] text-foreground">
+    <h2 className="text-foreground mb-2 text-2xl font-semibold tracking-tight">
       {title}
     </h2>
-    <p className="m-0 max-w-2xl text-sm leading-7 text-muted-foreground">
+    <p className="text-muted-foreground m-0 max-w-2xl text-sm leading-7">
       {description}
     </p>
   </div>
@@ -598,25 +610,22 @@ const Docs = () => (
     <DocsSidebar />
 
     <article className="min-w-0">
-      <section className="border-b border-border pb-8" id="overview">
-        <Badge
-          variant="outline"
-          className="mb-4 bg-background px-2.5 py-1 font-mono text-xs"
-        >
+      <section className="border-border border-b pb-8" id="overview">
+        <Badge variant="outline" className="mb-4">
           Documentation
         </Badge>
-        <h1 className="mb-4 text-4xl font-semibold tracking-[-0.045em] sm:text-5xl">
+        <h1 className="mb-4 text-4xl font-semibold tracking-tight sm:text-5xl">
           cursor-api docs
         </h1>
-        <p className="max-w-3xl text-lg leading-8 text-muted-foreground">
+        <p className="text-muted-foreground max-w-3xl text-lg leading-8">
           Run a local Windows daemon that exposes Cursor Composer through
           OpenAI-compatible and Anthropic-compatible API shapes for agent
           clients.
         </p>
 
         <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_18rem]">
-          <div className="rounded-xl border border-border bg-background p-4 shadow-[var(--shadow-card)] sm:p-5">
-            <p className="m-0 text-sm leading-7 text-muted-foreground">
+          <div className="border-border bg-background rounded-xl border p-4 shadow-sm sm:p-5">
+            <p className="text-muted-foreground m-0 text-sm leading-7">
               The daemon binds to loopback, keeps your Cursor key encrypted
               under AppData, and translates common agent client requests through
               the bundled Cursor SDK bridge.
@@ -626,7 +635,7 @@ const Docs = () => (
         </div>
       </section>
 
-      <section className="border-b border-border py-8" id="client-settings">
+      <section className="border-border border-b py-8" id="client-settings">
         <SectionHeading
           description="Use these values in agent clients that support a custom local API endpoint."
           title="Client settings"
@@ -638,7 +647,7 @@ const Docs = () => (
         </div>
       </section>
 
-      <section className="border-b border-border py-8" id="quick-start">
+      <section className="border-border border-b py-8" id="quick-start">
         <SectionHeading
           description="Install the release bundle, store your Cursor key, then start the local daemon."
           title="Quick start"
@@ -654,12 +663,12 @@ const Docs = () => (
         </div>
       </section>
 
-      <section className="border-b border-border py-8" id="agent-setup">
+      <section className="border-border border-b py-8" id="agent-setup">
         <SectionHeading
           description="Each setup below includes the fields to save, the order to configure them, and the checks to run when a client hides connection errors."
           title="Agent setup"
         />
-        <div className="mb-5 rounded-lg border border-[color-mix(in_oklab,var(--geist-blue-700)_24%,var(--border))] bg-[color-mix(in_oklab,var(--geist-blue-700)_7%,var(--background))] p-4 text-sm leading-6 text-muted-foreground">
+        <div className="text-muted-foreground border-border bg-muted mb-5 rounded-lg border p-4 text-sm leading-6">
           These values are for agent configuration, not for a one-off prompt.
           Use <code>cursor-local</code> as the API key and choose either
           Composer model in the client settings.
@@ -671,7 +680,7 @@ const Docs = () => (
         </div>
       </section>
 
-      <section className="border-b border-border py-8" id="requests">
+      <section className="border-border border-b py-8" id="requests">
         <SectionHeading
           description="The server accepts common agent request shapes and translates them through the same Composer path."
           title="Request examples"
@@ -721,7 +730,7 @@ Content-Type: application/json
         </div>
       </section>
 
-      <section className="border-b border-border py-8" id="api-surface">
+      <section className="border-border border-b py-8" id="api-surface">
         <SectionHeading
           description="The daemon binds to loopback and exposes only the local /v1 surface."
           title="API surface"
@@ -729,24 +738,24 @@ Content-Type: application/json
         <div className="space-y-3">
           {endpointRows.map(([method, path, description]) => (
             <div
-              className="grid gap-2 border-b border-border py-3 last:border-b-0 sm:grid-cols-[5rem_minmax(16rem,18rem)_1fr]"
+              className="border-border grid gap-2 border-b py-3 last:border-b-0 sm:grid-cols-[5rem_minmax(16rem,18rem)_1fr]"
               key={path}
             >
-              <span className="font-mono text-xs font-semibold text-[var(--geist-blue-700)]">
+              <span className="text-primary font-mono text-xs font-semibold">
                 {method}
               </span>
-              <code className="w-fit max-w-full overflow-x-auto whitespace-nowrap font-mono text-xs">
+              <code className="w-fit max-w-full overflow-x-auto font-mono text-xs whitespace-nowrap">
                 {path}
               </code>
-              <span className="text-sm leading-6 text-muted-foreground">
+              <span className="text-muted-foreground text-sm leading-6">
                 {description}
               </span>
             </div>
           ))}
         </div>
 
-        <div className="mt-8 max-w-2xl space-y-4 text-sm leading-7 text-muted-foreground">
-          <h3 className="text-base font-semibold text-foreground">
+        <div className="text-muted-foreground mt-8 max-w-2xl space-y-4 text-sm leading-7">
+          <h3 className="text-foreground text-base font-semibold">
             Model choice
           </h3>
           <p>
@@ -761,7 +770,7 @@ Content-Type: application/json
         </div>
       </section>
 
-      <section className="border-b border-border py-8" id="runtime">
+      <section className="border-border border-b py-8" id="runtime">
         <SectionHeading
           description="The release bundle keeps the Bun-compiled CLI and Node bridge separate."
           title="Runtime lifecycle"
@@ -773,7 +782,7 @@ Content-Type: application/json
         </div>
       </section>
 
-      <section className="border-b border-border py-8" id="troubleshooting">
+      <section className="border-border border-b py-8" id="troubleshooting">
         <SectionHeading
           description="Use these checks before changing client configuration or reinstalling."
           title="Troubleshooting"
@@ -785,7 +794,7 @@ Content-Type: application/json
         </div>
       </section>
 
-      <section className="border-b border-border py-8" id="commands">
+      <section className="border-border border-b py-8" id="commands">
         <SectionHeading
           description="The CLI command surface is grouped by daemon control, configuration, and operations."
           title="Command reference"
@@ -803,7 +812,7 @@ Content-Type: application/json
               <div className="grid gap-2">
                 {commands.map((command) => (
                   <code
-                    className="block rounded-lg border border-border bg-[var(--geist-gray-alpha-100)] px-3 py-2 font-mono text-sm"
+                    className="border-border bg-muted block rounded-lg border px-3 py-2 font-mono text-sm"
                     key={command}
                   >
                     {command}
@@ -815,7 +824,7 @@ Content-Type: application/json
         </Tabs>
       </section>
 
-      <section className="border-b border-border py-8" id="storage">
+      <section className="border-border border-b py-8" id="storage">
         <SectionHeading
           description="User configuration lives under AppData and is preserved across release updates."
           title="Where data lives"
@@ -835,11 +844,11 @@ Content-Type: application/json
         <div className="grid gap-3 lg:grid-cols-2">
           {creditRows.map(([name, description]) => (
             <div
-              className="rounded-lg border border-border bg-background p-4 shadow-[var(--shadow-card)]"
+              className="border-border bg-background rounded-lg border p-4 shadow-sm"
               key={name}
             >
               <h3 className="mb-2 text-sm font-semibold">{name}</h3>
-              <p className="m-0 text-sm leading-6 text-muted-foreground">
+              <p className="text-muted-foreground m-0 text-sm leading-6">
                 {description}
               </p>
             </div>

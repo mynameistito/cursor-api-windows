@@ -1,10 +1,4 @@
-import {
-  existsSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -41,12 +35,7 @@ describe(loadSettings, () => {
   it("merges partial settings with defaults", () => {
     saveSettings({ autostart: false, port: DEFAULT_PORT });
     const settingsPath = path.join(tempAppData, "cursor-api", "settings.json");
-    const raw = JSON.parse(readFileSync(settingsPath, "utf-8")) as Record<
-      string,
-      unknown
-    >;
-    raw.port = 9000;
-    writeFileSync(settingsPath, `${JSON.stringify(raw)}\n`, "utf-8");
+    writeFileSync(settingsPath, '{"port":9000}\n', "utf-8");
 
     expect(loadSettings()).toStrictEqual({
       autostart: false,

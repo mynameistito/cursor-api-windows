@@ -152,15 +152,16 @@ const CommandLine = ({ value }: { value: string }) => {
   };
 
   return (
-    <div className="group/line relative flex min-w-0 items-center gap-1.5 rounded-sm py-0.5 pr-9 text-[0.68rem] leading-5 transition hover:bg-white/[0.04]">
-      <span className="shrink-0 select-none text-zinc-400">
+    <div className="group/line hover:bg-muted relative flex min-w-0 items-center gap-1.5 rounded-sm py-0.5 pr-9 text-xs leading-5 transition">
+      <span className="text-muted-foreground shrink-0 select-none">
         PS C:\Users\user&gt;
       </span>
-      <span className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap text-zinc-100 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <span className="text-foreground min-w-0 flex-1 [scrollbar-width:none] overflow-x-auto whitespace-nowrap [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
         {value}
       </span>
       <button
-        className="absolute right-0 inline-flex items-center gap-1 rounded-md border border-white/10 bg-[#080808] px-2 py-0.5 font-sans text-[0.68rem] font-medium text-zinc-500 opacity-100 transition hover:text-zinc-100 focus-visible:opacity-100 focus-visible:text-zinc-100 sm:opacity-0 sm:group-hover/line:opacity-100"
+        aria-label={copied ? "Copied to clipboard" : "Copy command"}
+        className="text-muted-foreground hover:text-foreground focus-visible:text-foreground border-border bg-background absolute right-0 inline-flex items-center gap-1 rounded-md border px-2 py-0.5 font-sans text-xs font-medium opacity-100 transition focus-visible:opacity-100 sm:opacity-0 sm:group-hover/line:opacity-100"
         onClick={copyValue}
         type="button"
       >
@@ -173,8 +174,8 @@ const CommandLine = ({ value }: { value: string }) => {
 
 const AgentLogo = ({ logo, name }: { logo: string; name: string }) => (
   <span
-    className={`flex size-11 items-center justify-center rounded-lg border border-border shadow-[var(--shadow-card)] ${
-      name === "Pi" ? "bg-zinc-950" : "bg-background/90"
+    className={`border-border flex size-11 items-center justify-center rounded-lg border shadow-sm ${
+      name === "Pi" ? "bg-primary" : "bg-background/90"
     }`}
   >
     <img
@@ -189,17 +190,15 @@ const AgentLogo = ({ logo, name }: { logo: string; name: string }) => (
 );
 
 const AgentCard = ({ logo, name }: (typeof agentClients)[number]) => (
-  <article className="group rounded-lg border border-border bg-card p-4 shadow-[var(--shadow-card)] transition hover:border-[var(--geist-gray-alpha-500)]">
+  <article className="group border-border bg-card hover:border-border rounded-lg border p-4 shadow-sm transition">
     <div className="mb-5 flex items-start justify-between gap-4">
       <AgentLogo logo={logo} name={name} />
-      <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1 font-medium text-[0.68rem] text-muted-foreground">
-        <span className="status-pulse size-1.5 rounded-full bg-[var(--geist-green-700)]" />
+      <span className="border-border bg-background text-muted-foreground inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium">
+        <span className="status-pulse bg-primary size-1.5 rounded-full" />
         Available
       </span>
     </div>
-    <h3 className="m-0 text-base font-semibold tracking-[-0.02em] text-foreground">
-      {name}
-    </h3>
+    <h3 className="text-foreground m-0 text-base font-semibold">{name}</h3>
   </article>
 );
 
@@ -212,63 +211,65 @@ const InfoTile = ({
   title: string;
   value: string;
 }) => (
-  <Card className="border-border bg-card transition-colors hover:border-[var(--geist-gray-alpha-500)]">
-    <CardContent className="space-y-4 p-5">
-      <Icon className="size-5 text-[var(--geist-blue-700)]" />
-      <div>
-        <h3 className="mb-2 text-sm font-semibold">{title}</h3>
-        <p className="m-0 break-words font-mono text-xs leading-5 text-muted-foreground">
-          {value}
-        </p>
+  <Card>
+    <CardContent>
+      <div className="space-y-4 p-5">
+        <Icon className="text-primary size-5" />
+        <div>
+          <h3 className="mb-2 text-sm font-semibold">{title}</h3>
+          <p className="text-muted-foreground m-0 font-mono text-xs leading-5 break-words">
+            {value}
+          </p>
+        </div>
+        <CheckCircle2 className="text-primary size-4" />
       </div>
-      <CheckCircle2 className="size-4 text-[var(--geist-green-700)]" />
     </CardContent>
   </Card>
 );
 
 const HeroConsole = () => (
-  <div className="relative rise-in [animation-delay:120ms]">
-    <Card className="relative overflow-hidden rounded-lg border-border bg-[#080808] py-0 text-zinc-100 shadow-[var(--shadow-card)] dark:bg-[#080808]">
-      <div className="border-b border-white/5 bg-[#2b2b2b]">
-        <div className="flex h-9 items-stretch justify-between text-sm text-zinc-300">
+  <div className="rise-in relative">
+    <div className="border-border bg-background text-foreground relative overflow-hidden rounded-lg border shadow-sm">
+      <div className="border-border bg-muted border-b">
+        <div className="text-muted-foreground flex h-9 items-stretch justify-between text-sm">
           <div className="flex min-w-0 items-stretch">
-            <div className="flex min-w-0 items-center gap-2 rounded-br-md bg-[#080808] px-2.5 text-zinc-100">
-              <span className="flex size-4 items-center justify-center rounded-[3px] border border-[var(--geist-blue-900)] bg-[#111827] text-[0.6rem] text-[var(--geist-blue-900)]">
+            <div className="bg-background text-foreground flex min-w-0 items-center gap-2 rounded-br-md px-2.5">
+              <span className="text-primary border-primary bg-muted flex size-4 items-center justify-center rounded-sm border text-xs">
                 &gt;_
               </span>
               <span className="truncate font-sans text-xs font-semibold">
                 PowerShell
               </span>
-              <X className="ml-8 size-3.5 text-zinc-300" />
+              <X className="text-muted-foreground ml-8 size-3.5" />
             </div>
             <span
               aria-hidden="true"
-              className="flex w-11 items-center justify-center border-x border-white/5 text-zinc-300 hover:bg-white/[0.05]"
+              className="border-border text-muted-foreground hover:bg-muted flex w-11 items-center justify-center border-x"
             >
               <Plus className="size-4" />
             </span>
             <span
               aria-hidden="true"
-              className="flex w-9 items-center justify-center text-zinc-300 hover:bg-white/[0.05]"
+              className="text-muted-foreground hover:bg-muted flex w-9 items-center justify-center"
             >
               <ChevronDown className="size-4" />
             </span>
           </div>
           <div className="hidden items-center sm:flex">
-            <span className="flex h-9 w-11 items-center justify-center text-zinc-300">
+            <span className="text-muted-foreground flex h-9 w-11 items-center justify-center">
               <Minus className="size-4" />
             </span>
-            <span className="flex h-9 w-11 items-center justify-center text-zinc-300">
+            <span className="text-muted-foreground flex h-9 w-11 items-center justify-center">
               <Square className="size-3" />
             </span>
-            <span className="flex h-9 w-11 items-center justify-center text-zinc-300">
+            <span className="text-muted-foreground flex h-9 w-11 items-center justify-center">
               <X className="size-4" />
             </span>
           </div>
         </div>
       </div>
-      <CardContent className="space-y-3 p-4 font-mono text-sm leading-6">
-        <div className="space-y-0 text-zinc-300">
+      <div className="space-y-3 p-4 font-mono text-sm leading-6">
+        <div className="text-muted-foreground space-y-0">
           <div>PowerShell 7.6.3</div>
           <div>PS C:\Users\user&gt;</div>
         </div>
@@ -277,55 +278,48 @@ const HeroConsole = () => (
             <CommandLine key={command} value={command} />
           ))}
         </div>
-        <Separator className="bg-white/10" />
+        <Separator />
         <div className="grid gap-3 sm:grid-cols-2">
           {models.map(([name, description]) => (
             <div
-              className="rounded-lg border border-white/10 bg-white/[0.04] p-4"
+              className="border-border bg-muted rounded-lg border p-4"
               key={name}
             >
-              <div className="mb-2 flex items-center gap-2 text-zinc-100">
-                <Bot className="size-4 text-[var(--geist-blue-700)]" />
+              <div className="text-foreground mb-2 flex items-center gap-2">
+                <Bot className="text-primary size-4" />
                 <span>{name}</span>
               </div>
-              <p className="m-0 font-sans text-sm leading-6 text-zinc-400">
+              <p className="text-muted-foreground m-0 font-sans text-sm leading-6">
                 {description}
               </p>
             </div>
           ))}
         </div>
-        <div className="rounded-lg border border-[color-mix(in_oklab,var(--geist-blue-700)_35%,transparent)] bg-[color-mix(in_oklab,var(--geist-blue-700)_12%,transparent)] p-4 text-zinc-400">
-          Base URL: <span className="text-zinc-100">{localBaseUrl}</span> · API
-          key: <span className="text-zinc-100">cursor-local</span>
+        <div className="border-border bg-muted text-muted-foreground rounded-lg border p-4">
+          Base URL: <span className="text-foreground">{localBaseUrl}</span> ·
+          API key: <span className="text-foreground">cursor-local</span>
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   </div>
 );
 
 const App = () => (
-  <main className="mx-auto w-full max-w-[1280px] px-4 pb-10 pt-8 sm:pt-12">
+  <main className="mx-auto w-full max-w-[1280px] px-4 pt-8 pb-10 sm:pt-12">
     <section className="grid min-h-[calc(100dvh-6rem)] items-center gap-10 lg:grid-cols-[0.95fr_1.05fr]">
-      <div className="max-w-3xl rise-in">
-        <Badge
-          className="mb-5 border-[color-mix(in_oklab,var(--geist-blue-700)_32%,var(--border))] bg-background px-3 py-1 font-mono text-xs"
-          variant="outline"
-        >
+      <div className="rise-in max-w-3xl">
+        <Badge className="mb-5" variant="outline">
           Cursor Composer 2.5 API for Local AI Harnesses
         </Badge>
-        <h1 className="mb-5 max-w-4xl text-5xl font-semibold leading-[0.96] tracking-[-0.065em] text-foreground sm:text-6xl lg:text-7xl">
+        <h1 className="text-foreground mb-5 max-w-4xl text-5xl leading-none font-semibold tracking-tight sm:text-6xl lg:text-7xl">
           Put Composer behind every coding agent.
         </h1>
-        <p className="mb-7 max-w-xl text-pretty text-lg leading-8 text-muted-foreground">
+        <p className="text-muted-foreground mb-7 max-w-xl text-lg leading-8 text-pretty">
           An unofficial CLI that exposes Cursor Composer 2.5 through one local
           OpenAI-compatible API.
         </p>
         <div className="flex flex-col gap-3 sm:flex-row">
-          <Button
-            asChild
-            className="px-3.5 text-primary-foreground no-underline hover:text-primary-foreground active:translate-y-px"
-            size="lg"
-          >
+          <Button asChild className="active:translate-y-px" size="lg">
             <a href={releasesUrl} rel="noreferrer" target="_blank">
               View Releases
               <ArrowRight className="size-4" />
@@ -333,7 +327,7 @@ const App = () => (
           </Button>
           <Button
             asChild
-            className="bg-background px-3.5 active:translate-y-px"
+            className="active:translate-y-px"
             size="lg"
             variant="outline"
           >
@@ -347,10 +341,10 @@ const App = () => (
 
     <section className="py-14">
       <div className="mb-7 max-w-2xl">
-        <h2 className="m-0 text-3xl font-semibold tracking-[-0.045em] text-foreground sm:text-4xl">
+        <h2 className="text-foreground m-0 text-3xl font-semibold tracking-tight sm:text-4xl">
           Allowed where agents can point at a local API.
         </h2>
-        <p className="mt-3 text-base leading-7 text-muted-foreground">
+        <p className="text-muted-foreground mt-3 text-base leading-7">
           Each supported client can point at the same local OpenAI-compatible
           endpoint.
         </p>
@@ -365,50 +359,45 @@ const App = () => (
     <section className="grid gap-4 py-12 lg:grid-cols-[1.15fr_0.85fr]">
       <div className="grid auto-rows-fr gap-4 sm:grid-cols-2">
         {highlights.map(({ description, icon: Icon, title }) => (
-          <Card
-            className="group h-full border-border bg-card transition-colors hover:border-[var(--geist-gray-alpha-500)]"
-            key={title}
-          >
+          <Card className="group h-full" key={title}>
             <CardHeader>
-              <div className="mb-4 flex size-10 items-center justify-center rounded-lg border border-border bg-muted text-[var(--geist-blue-700)]">
+              <div className="border-border bg-muted text-primary mb-4 flex size-10 items-center justify-center rounded-lg border">
                 <Icon className="size-4" />
               </div>
-              <CardTitle className="text-base tracking-[-0.02em]">
-                {title}
-              </CardTitle>
+              <CardTitle>{title}</CardTitle>
             </CardHeader>
-            <CardContent className="text-sm leading-6 text-muted-foreground">
-              {description}
-            </CardContent>
+            <CardContent>{description}</CardContent>
           </Card>
         ))}
       </div>
 
-      <Card className="rounded-lg border-[color-mix(in_oklab,var(--geist-blue-700)_26%,var(--border))] bg-[color-mix(in_oklab,var(--geist-blue-700)_8%,var(--card))]">
-        <CardContent className="flex h-full flex-col justify-between gap-10 p-6">
-          <div className="space-y-4">
-            <PlugZap className="size-6 text-[var(--geist-blue-700)]" />
-            <h2 className="m-0 text-3xl font-semibold tracking-[-0.04em] sm:text-4xl">
-              Drop it into the tools you already use.
-            </h2>
-            <p className="m-0 text-base leading-7 text-muted-foreground">
-              Configure your agent client with a local base URL, the literal
-              key, and either Composer model name.
-            </p>
+      <Card>
+        <CardContent>
+          <div className="flex h-full flex-col justify-between gap-10 p-6">
+            <div className="space-y-4">
+              <PlugZap className="text-primary size-6" />
+              <h2 className="m-0 text-3xl font-semibold tracking-tight sm:text-4xl">
+                Drop it into the tools you already use.
+              </h2>
+              <p className="text-muted-foreground m-0 text-base leading-7">
+                Configure your agent client with a local base URL, the literal
+                key, and either Composer model name.
+              </p>
+            </div>
+            <Button asChild variant="outline">
+              <Link to="/docs">Open setup guide</Link>
+            </Button>
           </div>
-          <Button asChild className="w-fit" variant="outline">
-            <Link to="/docs">Open setup guide</Link>
-          </Button>
         </CardContent>
       </Card>
     </section>
 
     <section className="py-10">
       <div className="mb-6 max-w-2xl">
-        <h2 className="m-0 text-3xl font-semibold tracking-[-0.04em] sm:text-4xl">
+        <h2 className="m-0 text-3xl font-semibold tracking-tight sm:text-4xl">
           Windows-native control plane.
         </h2>
-        <p className="mt-3 text-base leading-7 text-muted-foreground">
+        <p className="text-muted-foreground mt-3 text-base leading-7">
           Settings live in AppData, the API key is encrypted, and updates
           preserve local configuration.
         </p>

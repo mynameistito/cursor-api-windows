@@ -11,25 +11,28 @@ interface PreparedRequest {
   stream: boolean;
   includeUsage: boolean;
   promptChars: number;
-  responseMetadata: Record<string, unknown>;
+  responseMetadata: Record<string, ToolJsonValue | undefined>;
   tools: OpenAiToolSpec[];
   requiresLocalTool: boolean;
   previousResponseId?: string;
   storeResponse?: boolean;
-  responseInputItems?: unknown[];
+  responseInputItems?: ToolJsonValue[];
   toolContext?: ToolCallContext;
 }
 
+/** Describes a client tool that can be exposed through the OpenAI API. */
 export interface OpenAiToolSpec {
   name: string;
   description?: string;
-  parameters?: unknown;
+  parameters?: ToolJsonValue;
 }
 
+/** Provides local execution context for SDK tool-call mapping. */
 export interface ToolCallContext {
   workingDirectory?: string;
 }
 
+/** Represents a tool call in the OpenAI-compatible chat format. */
 export interface OpenAiToolCall {
   id: string;
   type: "function";
@@ -39,11 +42,11 @@ export interface OpenAiToolCall {
   };
 }
 
-interface ToolParameterSchemaShape {
+interface ToolParameterSchema {
   properties: string[];
   required: string[];
   allowAdditionalProperties: boolean;
-  propertySchemas: Record<string, unknown>;
+  propertySchemas: ToolJsonObject;
 }
 
 interface CursorModelPricing {
@@ -52,9 +55,13 @@ interface CursorModelPricing {
   source: string;
 }
 
+interface CursorModelPricingTable {
+  [model: string]: CursorModelPricing;
+}
+
 interface SdkToolCallMemory {
   name: string;
-  args: Record<string, unknown>;
+  args: ToolArgumentRecord;
 }
 
 const sdkToolCallMemory = new Map<string, SdkToolCallMemory>();
@@ -64,7 +71,7 @@ const SDK_TOOL_CALL_MEMORY_LIMIT = 2048;
 const CURSOR_COMPOSER_2_5_PRICING_SOURCE =
   "https://cursor.com/changelog/composer-2-5";
 
-const CURSOR_MODEL_PRICING: Record<string, CursorModelPricing> = {
+const CURSOR_MODEL_PRICING: CursorModelPricingTable = {
   auto: { input: 0.5, output: 2.5, source: CURSOR_COMPOSER_2_5_PRICING_SOURCE },
   "composer-2-5": {
     input: 0.5,
@@ -103,15 +110,18 @@ const CURSOR_MODEL_PRICING: Record<string, CursorModelPricing> = {
   },
 };
 
+const OPENAI_COMPATIBLE_REQUEST_DIRECTIVE =
+  "You are serving an OpenAI-compatible API request through Cursor Composer.";
+
 const SYSTEM_DIRECTIVE = [
-  "You are serving an OpenAI-compatible API request through Cursor Composer.",
+  OPENAI_COMPATIBLE_REQUEST_DIRECTIVE,
   "Answer the user directly in chat style.",
   "Do not modify files, run terminal commands, open pull requests, or use coding-agent workflow unless the user explicitly asks for code as text.",
   "Return only the final answer content.",
 ].join("\n");
 
 const TOOL_SYSTEM_DIRECTIVE = [
-  "You are serving an OpenAI-compatible API request through Cursor Composer.",
+  OPENAI_COMPATIBLE_REQUEST_DIRECTIVE,
   "This request is already in Agent mode because the client provided executable tools.",
   "The client tool inventory below is executable. You can inspect files, run shell commands, and edit through those tools when the user asks for project work.",
   "Answer directly only when no tool is needed.",
@@ -121,7 +131,7 @@ const TOOL_SYSTEM_DIRECTIVE = [
 ].join("\n");
 
 const AGENT_SYSTEM_DIRECTIVE = [
-  "You are serving an OpenAI-compatible API request through Cursor Composer.",
+  OPENAI_COMPATIBLE_REQUEST_DIRECTIVE,
   "This request is already in Agent mode.",
   "Answer directly when no tool is needed.",
   "Never tell the user to switch modes.",
@@ -160,16 +170,30 @@ const KNOWN_SDK_CANONICAL_TOOLS = new Set([
   "todowrite",
 ]);
 
-const isRecord = function isRecord(
-  value: unknown
-): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+const isRecord = function isRecord<Value>(
+  value: Value
+): value is Value & ToolJsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 };
 
-const expectRecord = function expectRecord(
-  value: unknown,
+const toolJsonString = function toolJsonString(
+  value: ToolJsonValue | undefined
+): string | undefined {
+  return String(value) === value ? String(value) : undefined;
+};
+
+const toolJsonNumber = function toolJsonNumber(
+  value: ToolJsonValue | undefined
+): number | undefined {
+  return Number(value) === value && Number.isFinite(Number(value))
+    ? Number(value)
+    : undefined;
+};
+
+const expectRecord = function expectRecord<Value>(
+  value: Value,
   name: string
-): Record<string, unknown> {
+): ToolJsonObject {
   if (!isRecord(value)) {
     throw new HttpError(
       `${name} must be an object`,
@@ -181,25 +205,10 @@ const expectRecord = function expectRecord(
   return value;
 };
 
-const expectArray = function expectArray(
-  value: unknown,
-  name: string
-): unknown[] {
-  if (!Array.isArray(value)) {
-    throw new HttpError(
-      `${name} must be an array`,
-      400,
-      "invalid_request_error",
-      name
-    );
-  }
-  return value;
-};
-
 const validateCommonUnsupported = function validateCommonUnsupported(
-  record: Record<string, unknown>
+  record: ToolJsonObject
 ) {
-  if (typeof record.n === "number" && record.n !== 1) {
+  if (toolJsonNumber(record.n) !== undefined && record.n !== 1) {
     throw new HttpError(
       "Only n=1 is supported.",
       400,
@@ -237,8 +246,8 @@ const validateCommonUnsupported = function validateCommonUnsupported(
 };
 
 const toolParametersFrom = function toolParametersFrom(
-  ...records: Record<string, unknown>[]
-): unknown {
+  ...records: ToolJsonObject[]
+): ToolJsonValue | undefined {
   for (const record of records) {
     for (const key of [
       "parameters",
@@ -255,8 +264,8 @@ const toolParametersFrom = function toolParametersFrom(
   return undefined;
 };
 
-const parseChatTools = function parseChatTools(
-  value: unknown
+const parseChatTools = function parseChatTools<Value>(
+  value: Value
 ): OpenAiToolSpec[] {
   if (value === undefined) {
     return [];
@@ -271,14 +280,11 @@ const parseChatTools = function parseChatTools(
   }
   return value.flatMap((tool, index) => {
     const record = expectRecord(tool, `tools[${index}]`);
-    const type = typeof record.type === "string" ? record.type.trim() : "";
+    const type = toolJsonString(record.type)?.trim() ?? "";
     const fn = isRecord(record.function) ? record.function : record;
-    let name = "";
-    if (typeof fn.name === "string" && fn.name.trim()) {
-      name = fn.name.trim();
-    } else if (typeof record.name === "string" && record.name.trim()) {
-      name = record.name.trim();
-    }
+    const nestedName = toolJsonString(fn.name)?.trim();
+    const topLevelName = toolJsonString(record.name)?.trim();
+    const name = nestedName || topLevelName || "";
     if (!name) {
       if (type && type !== "function") {
         return [];
@@ -290,38 +296,40 @@ const parseChatTools = function parseChatTools(
         `tools[${index}].function.name`
       );
     }
-    let description: string | undefined;
-    if (typeof fn.description === "string") {
-      ({ description } = fn);
-    } else if (typeof record.description === "string") {
-      ({ description } = record);
-    }
+    const description =
+      toolJsonString(fn.description) ?? toolJsonString(record.description);
     const parameters = toolParametersFrom(fn, record);
-    return [
-      {
-        name,
-        ...(description ? { description } : {}),
-        ...(parameters === undefined ? {} : { parameters }),
-      },
-    ];
+    const parsedTool: OpenAiToolSpec = { name };
+    if (description) {
+      parsedTool.description = description;
+    }
+    if (parameters !== undefined) {
+      parsedTool.parameters = parameters;
+    }
+    return [parsedTool];
   });
 };
 
 const contentToPlainText = function contentToPlainText(
-  content: unknown
+  content: ToolJsonValue | undefined
 ): string {
-  if (typeof content === "string") {
-    return content;
+  const directText = toolJsonString(content);
+  if (directText !== undefined) {
+    return directText;
   }
   if (!Array.isArray(content)) {
     return "";
   }
   const parts: string[] = [];
   for (const part of content) {
-    if (typeof part === "string") {
-      parts.push(part);
-    } else if (isRecord(part) && typeof part.text === "string") {
-      parts.push(part.text);
+    const partText = toolJsonString(part);
+    if (partText !== undefined) {
+      parts.push(partText);
+    } else if (isRecord(part)) {
+      const nestedText = toolJsonString(part.text);
+      if (nestedText !== undefined) {
+        parts.push(nestedText);
+      }
     }
   }
   return parts.join("\n");
@@ -345,16 +353,23 @@ const sanitizeContextPath = function sanitizeContextPath(
 const workingDirectoryFromText = function workingDirectoryFromText(
   text: string
 ): string | undefined {
-  for (const pattern of [
-    /^\s*Working directory:\s*(?<path>.+)$/imu,
-    /^\s*Current working directory:\s*(?<path>.+)$/imu,
-    /^\s*Workspace root folder:\s*(?<path>.+)$/imu,
-    /^\s*Workspace root:\s*(?<path>.+)$/imu,
-  ]) {
-    const match = pattern.exec(text);
-    const value = sanitizeContextPath(match?.groups?.path);
-    if (value) {
-      return value;
+  const labels = [
+    "Working directory:",
+    "Current working directory:",
+    "Workspace root folder:",
+    "Workspace root:",
+  ];
+  for (const line of text.split(/\r?\n/u)) {
+    const trimmedLine = line.trimStart();
+    const lowerLine = trimmedLine.toLowerCase();
+    const label = labels.find((candidate) =>
+      lowerLine.startsWith(candidate.toLowerCase())
+    );
+    if (label) {
+      const path = sanitizeContextPath(trimmedLine.slice(label.length).trim());
+      if (path) {
+        return path;
+      }
     }
   }
   return undefined;
@@ -363,12 +378,16 @@ const workingDirectoryFromText = function workingDirectoryFromText(
 const toolCallContextFromMessages = function toolCallContextFromMessages(
   messages: unknown[]
 ): ToolCallContext | undefined {
-  const workingDirectory = messages
-    .map((message) =>
-      isRecord(message) ? contentToPlainText(message.content) : ""
-    )
-    .map(workingDirectoryFromText)
-    .find(Boolean);
+  let workingDirectory: string | undefined;
+  for (const message of messages) {
+    if (workingDirectory) {
+      break;
+    }
+    const messageText = isRecord(message)
+      ? contentToPlainText(message.content)
+      : "";
+    workingDirectory = workingDirectoryFromText(messageText);
+  }
   return workingDirectory ? { workingDirectory } : undefined;
 };
 
@@ -418,7 +437,7 @@ const explicitlyRequestedToolName = function explicitlyRequestedToolName(
 };
 
 const emptyToolParameterSchema =
-  function emptyToolParameterSchema(): ToolParameterSchemaShape {
+  function emptyToolParameterSchema(): ToolParameterSchema {
     return {
       allowAdditionalProperties: false,
       properties: [],
@@ -432,9 +451,9 @@ const jsonPointerToken = function jsonPointerToken(value: string): string {
 };
 
 const jsonPointerTarget = function jsonPointerTarget(
-  root: unknown,
+  root: ToolJsonValue | undefined,
   ref: string
-): unknown {
+): ToolJsonValue | undefined {
   if (!ref.startsWith("#")) {
     return undefined;
   }
@@ -444,7 +463,7 @@ const jsonPointerTarget = function jsonPointerTarget(
   if (!ref.startsWith("#/")) {
     return undefined;
   }
-  let current: unknown = root;
+  let current: ToolJsonValue | undefined = root;
   for (const token of ref.slice(2).split("/").map(jsonPointerToken)) {
     if (Array.isArray(current)) {
       const index = Number(token);
@@ -462,9 +481,9 @@ const jsonPointerTarget = function jsonPointerTarget(
 };
 
 const localSchemaReference = function localSchemaReference(
-  root: unknown,
+  root: ToolJsonValue | undefined,
   ref: string
-): unknown {
+): ToolJsonValue | undefined {
   if (!ref.startsWith("#")) {
     return undefined;
   }
@@ -482,15 +501,15 @@ const localSchemaReference = function localSchemaReference(
 };
 
 const dereferenceToolSchema = function dereferenceToolSchema(
-  value: unknown,
-  root: unknown,
+  value: ToolJsonValue | undefined,
+  root: ToolJsonValue | undefined,
   depth = 0,
   seenRefs = new Set<string>()
-): unknown {
-  if (depth > 5 || !isRecord(value) || typeof value.$ref !== "string") {
+): ToolJsonValue | undefined {
+  if (depth > 5 || !isRecord(value)) {
     return value;
   }
-  const ref = value.$ref.trim();
+  const ref = toolJsonString(value.$ref)?.trim() ?? "";
   if (!ref || seenRefs.has(ref)) {
     return value;
   }
@@ -507,11 +526,11 @@ const dereferenceToolSchema = function dereferenceToolSchema(
 };
 
 const canonicalToolSchemaRecord = function canonicalToolSchemaRecord(
-  value: unknown,
-  root: unknown,
+  value: ToolJsonValue | undefined,
+  root: ToolJsonValue | undefined,
   depth = 0,
   seenRefs = new Set<string>()
-): Record<string, unknown> | undefined {
+): ToolJsonObject | undefined {
   if (depth > 5) {
     return undefined;
   }
@@ -541,18 +560,18 @@ const canonicalToolSchemaRecord = function canonicalToolSchemaRecord(
 };
 
 const directToolParameterSchema = function directToolParameterSchema(
-  parameters: Record<string, unknown>,
-  root: unknown,
+  parameters: ToolJsonObject,
+  root: ToolJsonValue | undefined,
   depth: number,
   seenRefs: Set<string>
-): ToolParameterSchemaShape {
+): ToolParameterSchema {
   const properties = isRecord(parameters.properties)
     ? parameters.properties
     : undefined;
   const required = Array.isArray(parameters.required)
-    ? parameters.required.filter(
-        (item): item is string => typeof item === "string"
-      )
+    ? parameters.required
+        .map(toolJsonString)
+        .filter((item): item is string => item !== undefined)
     : [];
   const propertySchemas = properties
     ? Object.fromEntries(
@@ -573,22 +592,25 @@ const directToolParameterSchema = function directToolParameterSchema(
 };
 
 const composedToolSchemas = function composedToolSchemas(
-  value: unknown
-): unknown[] {
+  value: ToolJsonValue | undefined
+): ToolJsonValue[] {
   return Array.isArray(value) ? value : [];
 };
 
 const unionStringArrays = function unionStringArrays(
-  ...values: unknown[]
+  ...values: (ToolJsonValue | undefined)[]
 ): string[] {
   const output: string[] = [];
+  const seen = new Set<string>();
   for (const value of values) {
     if (!Array.isArray(value)) {
       continue;
     }
     for (const item of value) {
-      if (typeof item === "string" && !output.includes(item)) {
-        output.push(item);
+      const text = toolJsonString(item);
+      if (text !== undefined && !seen.has(text)) {
+        output.push(text);
+        seen.add(text);
       }
     }
   }
@@ -596,18 +618,26 @@ const unionStringArrays = function unionStringArrays(
 };
 
 const mergePropertySchemas = function mergePropertySchemas(
-  left: unknown,
-  right: unknown
-): unknown {
+  left: ToolJsonValue | undefined,
+  right: ToolJsonValue | undefined
+): ToolJsonValue | undefined {
   if (!isRecord(left) || !isRecord(right)) {
     return left ?? right;
   }
-  const merged: Record<string, unknown> = { ...right, ...left };
+  const merged: ToolJsonObject = {};
+  for (const [key, value] of Object.entries(right)) {
+    merged[key] = value;
+  }
+  for (const [key, value] of Object.entries(left)) {
+    merged[key] = value;
+  }
+  const leftRecord = left;
+  const rightRecord = right;
   const enumValues = unionStringArrays(
-    left.enum,
-    right.enum,
-    left.const === undefined ? undefined : [left.const],
-    right.const === undefined ? undefined : [right.const]
+    leftRecord.enum,
+    rightRecord.enum,
+    leftRecord.const === undefined ? undefined : [leftRecord.const],
+    rightRecord.const === undefined ? undefined : [rightRecord.const]
   );
   if (enumValues.length) {
     merged.enum = enumValues;
@@ -617,9 +647,9 @@ const mergePropertySchemas = function mergePropertySchemas(
   }
   if (
     merged.description === undefined &&
-    typeof right.description === "string"
+    toolJsonString(rightRecord.description) !== undefined
   ) {
-    merged.description = right.description;
+    merged.description = rightRecord.description;
   }
   return merged;
 };
@@ -631,47 +661,51 @@ const intersectRequiredProperties = function intersectRequiredProperties(
   if (!nonEmpty.length) {
     return [];
   }
-  return nonEmpty[0].filter((property) =>
-    nonEmpty.every((required) => required.includes(property))
+  const [firstRequired = []] = nonEmpty;
+  const requiredPropertySets = nonEmpty.map((required) => new Set(required));
+  return firstRequired.filter((property) =>
+    requiredPropertySets.every((required) => required.has(property))
   );
 };
 
 const mergeToolParameterSchemas = function mergeToolParameterSchemas(
-  shapes: ToolParameterSchemaShape[],
+  schemas: ToolParameterSchema[],
   requiredMode: "union" | "intersection"
-): ToolParameterSchemaShape {
-  const useful = shapes.filter(
-    (shape) =>
-      shape.properties.length ||
-      shape.required.length ||
-      shape.allowAdditionalProperties
+): ToolParameterSchema {
+  const useful = schemas.filter(
+    (schema) =>
+      schema.properties.length ||
+      schema.required.length ||
+      schema.allowAdditionalProperties
   );
   if (!useful.length) {
     return emptyToolParameterSchema();
   }
-  const propertySchemas: Record<string, unknown> = {};
+  const propertySchemas: ToolJsonObject = {};
   const properties: string[] = [];
-  for (const shape of useful) {
-    for (const property of shape.properties) {
-      if (!properties.includes(property)) {
+  const propertySet = new Set<string>();
+  for (const schema of useful) {
+    for (const property of schema.properties) {
+      if (!propertySet.has(property)) {
         properties.push(property);
+        propertySet.add(property);
       }
       propertySchemas[property] =
         propertySchemas[property] === undefined
-          ? shape.propertySchemas[property]
+          ? schema.propertySchemas[property]
           : mergePropertySchemas(
               propertySchemas[property],
-              shape.propertySchemas[property]
+              schema.propertySchemas[property]
             );
     }
   }
   const required =
     requiredMode === "intersection"
-      ? intersectRequiredProperties(useful.map((shape) => shape.required))
-      : [...new Set(useful.flatMap((shape) => shape.required))];
+      ? intersectRequiredProperties(useful.map((schema) => schema.required))
+      : [...new Set(useful.flatMap((schema) => schema.required))];
   return {
     allowAdditionalProperties: useful.some(
-      (shape) => shape.allowAdditionalProperties
+      (schema) => schema.allowAdditionalProperties
     ),
     properties,
     propertySchemas,
@@ -680,11 +714,11 @@ const mergeToolParameterSchemas = function mergeToolParameterSchemas(
 };
 
 const toolParameterSchemaFromValue = function toolParameterSchemaFromValue(
-  value: unknown,
+  value: ToolJsonValue | undefined,
   depth = 0,
-  root: unknown = value,
+  root: ToolJsonValue | undefined = value,
   seenRefs = new Set<string>()
-): ToolParameterSchemaShape {
+): ToolParameterSchema {
   if (depth > 5) {
     return emptyToolParameterSchema();
   }
@@ -714,8 +748,11 @@ const toolParameterSchemaFromValue = function toolParameterSchemaFromValue(
 
 const toolParameterSchema = function toolParameterSchema(
   tool: OpenAiToolSpec | undefined
-): ToolParameterSchemaShape {
-  return toolParameterSchemaFromValue(tool?.parameters);
+): ToolParameterSchema {
+  const parameters = tool?.parameters;
+  return toolParameterSchemaFromValue(
+    isRecord(parameters) ? parameters : undefined
+  );
 };
 
 const firstMatchingProperty = function firstMatchingProperty(
@@ -723,8 +760,9 @@ const firstMatchingProperty = function firstMatchingProperty(
   properties: string[],
   normalizedProperties: Map<string, string>
 ): string | undefined {
+  const propertySet = new Set(properties);
   for (const candidate of candidates) {
-    if (properties.includes(candidate)) {
+    if (propertySet.has(candidate)) {
       return candidate;
     }
     const normalized = normalizedProperties.get(normalizeToolName(candidate));
@@ -833,7 +871,7 @@ const wrapperObjectArgumentProperty = function wrapperObjectArgumentProperty(
 ):
   | {
       key: string;
-      parameters: unknown;
+      parameters: ToolJsonValue;
     }
   | undefined {
   if (!tool || !schema.properties.length) {
@@ -938,6 +976,24 @@ const newTextCandidates = function newTextCandidates(): string[] {
   ];
 };
 
+const hasSchemaProperty = function hasSchemaProperty(
+  schema: ToolParameterSchema,
+  normalizedProperties: Map<string, string>,
+  candidates: string[]
+): boolean {
+  return Boolean(
+    firstMatchingProperty(candidates, schema.properties, normalizedProperties)
+  );
+};
+
+const schemaPropertyMatcher = function schemaPropertyMatcher(
+  schema: ToolParameterSchema,
+  normalizedProperties: Map<string, string>
+): (candidates: string[]) => boolean {
+  return (candidates) =>
+    hasSchemaProperty(schema, normalizedProperties, candidates);
+};
+
 const commandStyleFileToolSupports = function commandStyleFileToolSupports(
   canonical: string,
   tool: OpenAiToolSpec
@@ -952,10 +1008,7 @@ const commandStyleFileToolSupports = function commandStyleFileToolSupports(
   const normalizedProperties = new Map(
     schema.properties.map((property) => [normalizeToolName(property), property])
   );
-  const has = (candidates: string[]) =>
-    Boolean(
-      firstMatchingProperty(candidates, schema.properties, normalizedProperties)
-    );
+  const has = schemaPropertyMatcher(schema, normalizedProperties);
   if (!has(operationPropertyCandidates()) || !has(pathCandidates())) {
     return false;
   }
@@ -1119,10 +1172,7 @@ const schemaLooksCompatible = function schemaLooksCompatible(
   const normalizedProperties = new Map(
     schema.properties.map((property) => [normalizeToolName(property), property])
   );
-  const has = (candidates: string[]) =>
-    Boolean(
-      firstMatchingProperty(candidates, schema.properties, normalizedProperties)
-    );
+  const has = schemaPropertyMatcher(schema, normalizedProperties);
   const canonical = canonicalToolName(emittedName);
   const wrapper = wrapperObjectArgumentProperty(tool, schema);
   if (wrapper) {
@@ -1187,16 +1237,19 @@ const shouldRequireLocalTool = function shouldRequireLocalTool(
     return true;
   }
   const lower = text.toLowerCase();
-  const hasPathSignal =
-    lower.includes("~/") ||
-    lower.includes("/") ||
-    lower.includes("desktop") ||
-    lower.includes("file") ||
-    lower.includes("folder") ||
-    lower.includes("directory") ||
+  const mentionsPathTerm = [
+    "~/",
+    "/",
+    "desktop",
+    "file",
+    "folder",
+    "directory",
+  ].some((term) => lower.includes(term));
+  const mentionsFileName =
     /\b[\w.-]+\.(?<ext>html|css|js|ts|tsx|jsx|json|md|txt|py|rb|go|rs|swift|toml|ya?ml)\b/u.test(
       lower
     );
+  const hasPathSignal = mentionsPathTerm || mentionsFileName;
   const wantsFileMutation =
     /\b(?<action>create|write|save|overwrite|edit|modify|update|delete|remove|make)\b/u.test(
       lower
@@ -1218,12 +1271,13 @@ const shouldRequireLocalTool = function shouldRequireLocalTool(
   if (wantsProjectScaffold && hasWorkspaceMutationCapability(tools)) {
     return true;
   }
-  const wantsCommand =
-    /\b(?<action>run|execute|start|launch)\b/u.test(lower) &&
-    (lower.includes("command") ||
-      lower.includes("shell") ||
-      lower.includes("terminal") ||
-      lower.includes("server"));
+  const requestsCommandAction = /\b(?<action>run|execute|start|launch)\b/u.test(
+    lower
+  );
+  const mentionsCommandTarget = ["command", "shell", "terminal", "server"].some(
+    (term) => lower.includes(term)
+  );
+  const wantsCommand = requestsCommandAction && mentionsCommandTarget;
   return wantsCommand && hasCompatibleTool("shell", tools);
 };
 
@@ -1247,13 +1301,14 @@ const nameMatchedToolCanAccept = function nameMatchedToolCanAccept(
 };
 
 const firstStringArg = function firstStringArg(
-  args: Record<string, unknown>,
+  args: ToolArgumentRecord,
   ...keys: string[]
 ): string | undefined {
   for (const key of keys) {
     const value = args[key];
-    if (typeof value === "string" && value.trim()) {
-      return value;
+    const text = toolJsonString(value);
+    if (text?.trim()) {
+      return text;
     }
   }
   return undefined;
@@ -1285,7 +1340,7 @@ const mcpProviderNameVariants = function mcpProviderNameVariants(
 };
 
 const mcpToolNameCandidates = function mcpToolNameCandidates(
-  args: Record<string, unknown>
+  args: ToolArgumentRecord
 ): string[] {
   const provider = firstStringArg(
     args,
@@ -1321,7 +1376,7 @@ const mcpToolNameCandidates = function mcpToolNameCandidates(
 };
 
 const resolveSpecificMCPTool = function resolveSpecificMCPTool(
-  args: Record<string, unknown>,
+  args: ToolArgumentRecord,
   tools: OpenAiToolSpec[]
 ): OpenAiToolSpec | undefined {
   const normalizedCandidates = new Set(
@@ -1342,28 +1397,30 @@ const resolveSpecificMCPTool = function resolveSpecificMCPTool(
 };
 
 const toolNameAliases = function toolNameAliases(normalized: string): string[] {
-  const aliases: Record<string, string[]> = {
-    createfile: ["write"],
-    editfile: ["edit"],
-    fileglob: ["glob", "find"],
-    filesearch: ["glob", "grep", "find"],
-    find: ["glob"],
-    findfile: ["glob"],
-    findfiles: ["glob", "find"],
-    list: ["ls"],
-    ls: ["list"],
-    mcp: ["callmcptool"],
-    openfile: ["read"],
-    readfile: ["read"],
-    replacefile: ["edit"],
-    runterminalcmd: ["bash", "shell"],
-    searchfiles: ["grep", "glob"],
-    searchreplace: ["edit"],
-    shell: ["bash"],
-    terminal: ["bash", "shell"],
-    writefile: ["write"],
-  };
-  return aliases[normalized] ?? [];
+  const aliases = new Map<string, string[]>(
+    Object.entries({
+      createfile: ["write"],
+      editfile: ["edit"],
+      fileglob: ["glob", "find"],
+      filesearch: ["glob", "grep", "find"],
+      find: ["glob"],
+      findfile: ["glob"],
+      findfiles: ["glob", "find"],
+      list: ["ls"],
+      ls: ["list"],
+      mcp: ["callmcptool"],
+      openfile: ["read"],
+      readfile: ["read"],
+      replacefile: ["edit"],
+      runterminalcmd: ["bash", "shell"],
+      searchfiles: ["grep", "glob"],
+      searchreplace: ["edit"],
+      shell: ["bash"],
+      terminal: ["bash", "shell"],
+      writefile: ["write"],
+    })
+  );
+  return aliases.get(normalized) ?? [];
 };
 
 const schemaCompatibilityScore = function schemaCompatibilityScore(
@@ -1414,7 +1471,7 @@ const canEmulateWithShell = function canEmulateWithShell(
 
 const resolveToolSpec = function resolveToolSpec(
   emittedName: string,
-  args: Record<string, unknown>,
+  args: ParsedArgumentRecord,
   tools: OpenAiToolSpec[]
 ): OpenAiToolSpec | undefined {
   const exact = tools.find((tool) => tool.name === emittedName);
@@ -1434,10 +1491,10 @@ const resolveToolSpec = function resolveToolSpec(
       return specific;
     }
   }
-  const candidates = toolNameAliases(normalized);
+  const candidates = new Set(toolNameAliases(normalized));
   const alias = tools.find(
     (tool) =>
-      candidates.includes(normalizeToolName(tool.name)) &&
+      candidates.has(normalizeToolName(tool.name)) &&
       schemaLooksCompatible(emittedName, tool)
   );
   if (alias) {
@@ -1449,13 +1506,15 @@ const resolveToolSpec = function resolveToolSpec(
       return glob;
     }
   }
-  const compatible = tools
-    .map((tool) => ({
-      score: schemaCompatibilityScore(emittedName, tool),
-      tool,
-    }))
-    .filter((candidate) => candidate.score > 0)
-    .toSorted((a, b) => b.score - a.score)[0]?.tool;
+  let compatible: OpenAiToolSpec | undefined;
+  let bestScore = 0;
+  for (const tool of tools) {
+    const score = schemaCompatibilityScore(emittedName, tool);
+    if (score > bestScore) {
+      compatible = tool;
+      bestScore = score;
+    }
+  }
   if (compatible) {
     return compatible;
   }
@@ -1467,7 +1526,7 @@ const resolveToolSpec = function resolveToolSpec(
 
 const toolCallMatchesClientTool = function toolCallMatchesClientTool(
   name: string,
-  args: Record<string, unknown>,
+  args: ParsedArgumentRecord,
   requestedTool: string,
   tools: OpenAiToolSpec[]
 ): boolean {
@@ -1482,87 +1541,170 @@ const toolCallMatchesClientTool = function toolCallMatchesClientTool(
   );
 };
 
-const parseToolCallArguments = function parseToolCallArguments(
+type ParsedArgumentValue =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | ParsedArgumentValue[]
+  | ParsedArgumentRecord;
+
+interface ParsedArgumentRecord {
+  [key: string]: ParsedArgumentValue;
+}
+
+interface OpenAiMessageRecord extends ParsedArgumentRecord {
+  content?: ParsedArgumentValue;
+  name?: ParsedArgumentValue;
+  role?: ParsedArgumentValue;
+  tool_calls?: ParsedArgumentValue;
+}
+
+const isStringValue = function isStringValue(
+  value: ParsedArgumentValue | undefined
+): value is string {
+  return String(value) === value;
+};
+
+const isParsedArgumentRecord = function isParsedArgumentRecord(
+  value: ParsedArgumentValue
+): value is ParsedArgumentRecord {
+  return (
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.getPrototypeOf(value) === Object.prototype
+  );
+};
+
+const isParsedArgumentValue = function isParsedArgumentValue(
   value: unknown
-): Record<string, unknown> {
-  if (isRecord(value)) {
-    return value;
+): value is ParsedArgumentValue {
+  if (value === null || value === undefined || typeof value !== "object") {
+    return (
+      ["string", "number", "boolean", "undefined"].includes(typeof value) &&
+      (typeof value !== "number" || Number.isFinite(value))
+    );
   }
-  if (typeof value !== "string" || !value.trim()) {
+  if (Array.isArray(value)) {
+    return value.every(isParsedArgumentValue);
+  }
+  return isRecord(value) && Object.values(value).every(isParsedArgumentValue);
+};
+
+const parseArgumentRecord = function parseArgumentRecord(
+  value: ParsedArgumentRecord
+): ParsedArgumentRecord {
+  return { ...value };
+};
+
+const parseArgumentValue = function parseArgumentValue(
+  value: ParsedArgumentValue
+): ParsedArgumentValue | undefined {
+  if (Array.isArray(value)) {
+    return value.map((entry) => parseArgumentValue(entry));
+  }
+  if (isParsedArgumentRecord(value)) {
+    return parseArgumentRecord(value);
+  }
+  return value;
+};
+
+const parseToolCallArguments = function parseToolCallArguments(
+  value: ParsedArgumentValue
+): ParsedArgumentRecord {
+  if (isParsedArgumentRecord(value)) {
+    return parseArgumentRecord(value) ?? {};
+  }
+  if (!isStringValue(value) || !value.trim()) {
     return {};
   }
   try {
-    const parsed = JSON.parse(value) as unknown;
-    return isRecord(parsed) ? parsed : {};
+    const parsed: unknown = JSON.parse(value);
+    return isParsedArgumentValue(parsed) && isParsedArgumentRecord(parsed)
+      ? parseArgumentRecord(parsed)
+      : {};
   } catch {
     return {};
   }
 };
 
-const hasSpecificToolCallAfterLatestUser =
-  function hasSpecificToolCallAfterLatestUser(
-    messages: unknown[],
+const messageContainsSpecificToolCall =
+  function messageContainsSpecificToolCall(
+    message: OpenAiMessageRecord,
     requestedTool: string,
-    tools: OpenAiToolSpec[] = []
+    tools: OpenAiToolSpec[]
   ): boolean {
-    let sawLatestUser = false;
-    let foundAfterLatestUser = false;
-    for (const message of messages) {
-      if (!isRecord(message)) {
-        continue;
-      }
-      const role = typeof message.role === "string" ? message.role : "user";
-      if (role === "user" && contentToPlainText(message.content).trim()) {
-        sawLatestUser = true;
-        foundAfterLatestUser = false;
-      }
-      if (!sawLatestUser || !Array.isArray(message.tool_calls)) {
-        continue;
-      }
-      for (const toolCall of message.tool_calls) {
-        if (!isRecord(toolCall)) {
-          continue;
+    return (
+      Array.isArray(message.tool_calls) &&
+      message.tool_calls.some((item) => {
+        if (item === undefined || !isParsedArgumentRecord(item)) {
+          return false;
         }
-        const fn = isRecord(toolCall.function) ? toolCall.function : undefined;
-        if (!fn || typeof fn.name !== "string") {
-          continue;
-        }
-        if (
+        const fn = isParsedArgumentRecord(item.function)
+          ? item.function
+          : undefined;
+        return Boolean(
+          fn &&
+          isStringValue(fn.name) &&
           toolCallMatchesClientTool(
             fn.name,
             parseToolCallArguments(fn.arguments),
             requestedTool,
             tools
           )
-        ) {
-          foundAfterLatestUser = true;
-        }
+        );
+      })
+    );
+  };
+
+const hasSpecificToolCallAfterLatestUser =
+  function hasSpecificToolCallAfterLatestUser(
+    messages: OpenAiMessageRecord[],
+    requestedTool: string,
+    tools: OpenAiToolSpec[] = []
+  ): boolean {
+    let sawLatestUser = false;
+    let foundAfterLatestUser = false;
+    for (const message of messages) {
+      const role = isStringValue(message.role) ? message.role : "user";
+      if (role === "user" && contentToPlainText(message.content).trim()) {
+        sawLatestUser = true;
+        foundAfterLatestUser = false;
+      }
+      if (
+        sawLatestUser &&
+        messageContainsSpecificToolCall(message, requestedTool, tools)
+      ) {
+        foundAfterLatestUser = true;
       }
     }
     return foundAfterLatestUser;
   };
 
 const recordArgumentValue = function recordArgumentValue(
-  value: unknown
-): Record<string, unknown> | null {
-  if (isRecord(value)) {
-    return value;
+  value: ParsedArgumentValue
+): ParsedArgumentRecord | null {
+  if (isParsedArgumentRecord(value)) {
+    return parseArgumentRecord(value) ?? null;
   }
-  if (typeof value !== "string" || !value.trim().startsWith("{")) {
+  if (!isStringValue(value) || !value.trim().startsWith("{")) {
     return null;
   }
   try {
-    const parsed = JSON.parse(value) as unknown;
-    return isRecord(parsed) ? parsed : null;
+    const parsed: unknown = JSON.parse(value);
+    return isParsedArgumentValue(parsed) && isParsedArgumentRecord(parsed)
+      ? parseArgumentRecord(parsed)
+      : null;
   } catch {
     return null;
   }
 };
 
 const argumentRecords = function argumentRecords(
-  args: Record<string, unknown>,
+  args: ParsedArgumentRecord,
   depth = 0
-): Record<string, unknown>[] {
+): ParsedArgumentRecord[] {
   if (depth > 3 || Array.isArray(args)) {
     return [args];
   }
@@ -1578,7 +1720,7 @@ const argumentRecords = function argumentRecords(
 };
 
 const firstStringArgFromRecords = function firstStringArgFromRecords(
-  args: Record<string, unknown>,
+  args: ParsedArgumentRecord,
   keys: string[]
 ): string | undefined {
   for (const record of argumentRecords(args)) {
@@ -1619,30 +1761,30 @@ const isFileMutatingShellCommand = function isFileMutatingShellCommand(
 };
 
 const firstArg = function firstArg(
-  args: Record<string, unknown>,
+  args: ParsedArgumentRecord,
   keys: string[]
-): unknown {
+): ParsedArgumentValue | undefined {
   for (const key of keys) {
     if (args[key] !== undefined) {
-      return args[key];
+      return parseArgumentValue(args[key]);
     }
   }
   const normalizedKeys = new Set(keys.map(normalizeToolName));
   for (const [key, value] of Object.entries(args)) {
     if (normalizedKeys.has(normalizeToolName(key))) {
-      return value;
+      return parseArgumentValue(value);
     }
   }
   return undefined;
 };
 
 const shouldIncludeOptionalPath = function shouldIncludeOptionalPath(
-  value: unknown
+  value: ParsedArgumentValue | undefined
 ): boolean {
   if (value === undefined) {
     return false;
   }
-  if (typeof value !== "string") {
+  if (!isStringValue(value)) {
     return true;
   }
   const trimmed = value.trim();
@@ -1655,16 +1797,16 @@ const shouldIncludeOptionalPath = function shouldIncludeOptionalPath(
 };
 
 const firstStringArgAllowEmpty = function firstStringArgAllowEmpty(
-  args: Record<string, unknown>,
+  args: ParsedArgumentRecord,
   ...keys: string[]
 ): string | undefined {
   const value = firstArg(args, keys);
-  return typeof value === "string" ? value : undefined;
+  return isStringValue(value) ? value : undefined;
 };
 
 const looksLikeWorkspaceMutationArguments =
   function looksLikeWorkspaceMutationArguments(
-    args: Record<string, unknown>
+    args: ParsedArgumentRecord
   ): boolean {
     for (const record of argumentRecords(args)) {
       const path = firstArg(record, [
@@ -1690,7 +1832,7 @@ const looksLikeWorkspaceMutationArguments =
         ...operationPropertyCandidates()
       );
       const normalizedOperation = operation ? normalizeToolName(operation) : "";
-      const mutatingOperation = [
+      const mutatingOperation = new Set([
         "write",
         "create",
         "overwrite",
@@ -1700,7 +1842,7 @@ const looksLikeWorkspaceMutationArguments =
         "delete",
         "remove",
         "strreplace",
-      ].includes(normalizedOperation);
+      ]).has(normalizedOperation);
       if (!hasPath) {
         continue;
       }
@@ -1756,10 +1898,10 @@ const looksLikeWorkspaceMutationArguments =
 
 const isWorkspaceMutationToolCall = function isWorkspaceMutationToolCall(
   name: string,
-  args: unknown,
+  args: ParsedArgumentValue | undefined,
   tools: OpenAiToolSpec[] = []
 ): boolean {
-  const parsed = parseToolCallArguments(args);
+  const parsed = args === undefined ? {} : parseToolCallArguments(args);
   const canonical = canonicalToolName(name);
   if (["write", "edit", "delete"].includes(canonical)) {
     return true;
@@ -1799,50 +1941,57 @@ const isWorkspaceMutationToolCall = function isWorkspaceMutationToolCall(
   return false;
 };
 
+const messageHasWorkspaceMutationToolCall =
+  function messageHasWorkspaceMutationToolCall(
+    message: OpenAiMessageRecord,
+    tools: OpenAiToolSpec[]
+  ): boolean {
+    return (
+      Array.isArray(message.tool_calls) &&
+      message.tool_calls.some((call) => {
+        if (call === undefined || !isParsedArgumentRecord(call)) {
+          return false;
+        }
+        const fn = isParsedArgumentRecord(call.function)
+          ? call.function
+          : undefined;
+        return Boolean(
+          fn &&
+          isStringValue(fn.name) &&
+          isWorkspaceMutationToolCall(fn.name, fn.arguments, tools)
+        );
+      })
+    );
+  };
+
 const hasWorkspaceMutationToolCall = function hasWorkspaceMutationToolCall(
-  messages: unknown[],
+  messages: OpenAiMessageRecord[],
   tools: OpenAiToolSpec[] = []
 ): boolean {
   let sawLatestUser = false;
   let mutationAfterLatestUser = false;
   for (const message of messages) {
-    if (!isRecord(message)) {
-      continue;
-    }
-    const role = typeof message.role === "string" ? message.role : "user";
+    const role = isStringValue(message.role) ? message.role : "user";
     if (role === "user" && contentToPlainText(message.content).trim()) {
       sawLatestUser = true;
       mutationAfterLatestUser = false;
     }
     if (
       sawLatestUser &&
-      typeof message.name === "string" &&
+      isStringValue(message.name) &&
       isWorkspaceMutationToolCall(message.name, undefined, tools)
     ) {
       mutationAfterLatestUser = true;
     }
-    if (!Array.isArray(message.tool_calls)) {
-      continue;
-    }
-    for (const toolCall of message.tool_calls) {
-      if (!isRecord(toolCall)) {
-        continue;
-      }
-      const fn = isRecord(toolCall.function) ? toolCall.function : undefined;
-      if (
-        sawLatestUser &&
-        typeof fn?.name === "string" &&
-        isWorkspaceMutationToolCall(fn.name, fn.arguments, tools)
-      ) {
-        mutationAfterLatestUser = true;
-      }
+    if (sawLatestUser && messageHasWorkspaceMutationToolCall(message, tools)) {
+      mutationAfterLatestUser = true;
     }
   }
   return mutationAfterLatestUser;
 };
 
 const hasRequiredLocalToolCall = function hasRequiredLocalToolCall(
-  messages: unknown[],
+  messages: OpenAiMessageRecord[],
   tools: OpenAiToolSpec[],
   latestUserText: string
 ): boolean {
@@ -1939,29 +2088,41 @@ const mcpTargetForClientToolName = function mcpTargetForClientToolName(
   return { provider: "client", toolName: trimmed };
 };
 
+interface ToolInventoryRecord {
+  name: string;
+  description?: string;
+  parameters?: OpenAiToolSpec["parameters"];
+  sdk_mcp?: {
+    args: string;
+    providerIdentifier: string;
+    toolName: string;
+  };
+}
+
 const toolInventoryRecord = function toolInventoryRecord(
   tool: OpenAiToolSpec,
   options: {
     includeSdkMcp: boolean;
   }
-): Record<string, unknown> {
+): ToolInventoryRecord {
   const target = options.includeSdkMcp
     ? mcpTargetForClientToolName(tool.name, { includeMapped: false })
     : undefined;
-  return {
-    name: tool.name,
-    ...(tool.description ? { description: tool.description } : {}),
-    ...(tool.parameters === undefined ? {} : { parameters: tool.parameters }),
-    ...(target === undefined
-      ? {}
-      : {
-          sdk_mcp: {
-            args: "match this tool schema",
-            providerIdentifier: target.provider,
-            toolName: target.toolName,
-          },
-        }),
-  };
+  const inventory: ToolInventoryRecord = { name: tool.name };
+  if (tool.description) {
+    inventory.description = tool.description;
+  }
+  if (tool.parameters !== undefined) {
+    inventory.parameters = tool.parameters;
+  }
+  if (target) {
+    inventory.sdk_mcp = {
+      args: "match this tool schema",
+      providerIdentifier: target.provider,
+      toolName: target.toolName,
+    };
+  }
+  return inventory;
 };
 
 const directToolChoiceHint = function directToolChoiceHint(
@@ -1973,7 +2134,7 @@ const directToolChoiceHint = function directToolChoiceHint(
 const appendChatTools = function appendChatTools(
   transcript: string[],
   tools: OpenAiToolSpec[],
-  toolChoice: unknown
+  toolChoice: ParsedArgumentValue
 ) {
   if (!tools.length) {
     return;
@@ -1997,13 +2158,13 @@ const appendChatTools = function appendChatTools(
       JSON.stringify(toolInventoryRecord(tool, { includeSdkMcp: false }))
     );
   }
-  if (
-    isRecord(toolChoice) &&
-    toolChoice.type === "function" &&
-    isRecord(toolChoice.function) &&
-    typeof toolChoice.function.name === "string"
-  ) {
-    transcript.push(directToolChoiceHint(toolChoice.function.name));
+  const choice = isParsedArgumentRecord(toolChoice) ? toolChoice : undefined;
+  const functionChoice =
+    choice?.type === "function" && isParsedArgumentRecord(choice.function)
+      ? choice.function
+      : undefined;
+  if (functionChoice && isStringValue(functionChoice.name)) {
+    transcript.push(directToolChoiceHint(functionChoice.name));
   } else if (toolChoice === "required") {
     transcript.push("You must call at least one tool.");
   }
@@ -2031,65 +2192,54 @@ const appendWorkspaceMutationRequirement =
 
 const imageFromUrl = function imageFromUrl(
   url: string,
-  metadata?: Record<string, unknown>
+  metadata?: ParsedArgumentRecord
 ): CursorImage {
+  const width = metadata?.width;
+  const height = metadata?.height;
   const dimension =
-    typeof metadata?.width === "number" &&
-    typeof metadata.height === "number" &&
-    Number.isFinite(metadata.width) &&
-    Number.isFinite(metadata.height)
-      ? {
-          height: Math.round(metadata.height),
-          width: Math.round(metadata.width),
-        }
+    Number.isFinite(width) && Number.isFinite(height)
+      ? { height: Math.round(Number(height)), width: Math.round(Number(width)) }
       : undefined;
   const dataUrl = /^data:(?<mime>[^;,]+);base64,(?<data>.+)$/iu.exec(url);
   if (dataUrl) {
-    return {
+    const image: CursorImage = {
       data: dataUrl.groups?.data ?? "",
       mimeType: dataUrl.groups?.mime ?? "",
-      ...(dimension ? { dimension } : {}),
     };
+    return dimension ? { ...image, dimension } : image;
   }
-  return { url, ...(dimension ? { dimension } : {}) };
+  return dimension ? { dimension, url } : { url };
 };
 
 const appendContentPart = function appendContentPart(
-  part: unknown,
+  part: ParsedArgumentValue,
   role: string,
   parts: string[],
   images: CursorImage[]
 ) {
-  if (typeof part === "string") {
+  if (isStringValue(part)) {
     parts.push(part);
     return;
   }
-  if (!isRecord(part)) {
+  if (!isParsedArgumentRecord(part)) {
     parts.push(JSON.stringify(part));
     return;
   }
   const { type } = part;
   if (
     (type === "text" || type === "input_text" || type === "output_text") &&
-    typeof part.text === "string"
+    isStringValue(part.text)
   ) {
     parts.push(part.text);
   } else if (
-    type === "image_url" &&
-    isRecord(part.image_url) &&
-    typeof part.image_url.url === "string"
+    (type === "image_url" || type === "input_image") &&
+    isParsedArgumentRecord(part.image_url) &&
+    isStringValue(part.image_url.url)
   ) {
     images.push(imageFromUrl(part.image_url.url, part.image_url));
     parts.push("[image]");
-  } else if (type === "input_image" && typeof part.image_url === "string") {
+  } else if (type === "input_image" && isStringValue(part.image_url)) {
     images.push(imageFromUrl(part.image_url));
-    parts.push("[image]");
-  } else if (
-    type === "input_image" &&
-    isRecord(part.image_url) &&
-    typeof part.image_url.url === "string"
-  ) {
-    images.push(imageFromUrl(part.image_url.url, part.image_url));
     parts.push("[image]");
   } else if (type === "tool_result" || type === "function_call_output") {
     parts.push(`${role} ${String(type)}: ${JSON.stringify(part)}`);
@@ -2098,14 +2248,16 @@ const appendContentPart = function appendContentPart(
   }
 };
 
-const contentToTextAndImages = function contentToTextAndImages(
-  content: unknown,
-  role: string
-): {
+interface ContentTextAndImages {
   text: string;
   images: CursorImage[];
-} {
-  if (typeof content === "string") {
+}
+
+const contentToTextAndImages = function contentToTextAndImages(
+  content: ParsedArgumentValue,
+  role: string
+): ContentTextAndImages {
+  if (isStringValue(content)) {
     return { images: [], text: content };
   }
   if (content === null || content === undefined) {
@@ -2132,15 +2284,17 @@ const addWorkspaceActionToUserText = function addWorkspaceActionToUserText(
   ].join("\n");
 };
 
-const integerOrNull = function integerOrNull(value: unknown): number | null {
-  return typeof value === "number" && Number.isInteger(value) ? value : null;
+const integerOrNull = function integerOrNull(
+  value: ParsedArgumentValue
+): number | null {
+  return Number.isInteger(value) ? Number(value) : null;
 };
 
 const appendStopConstraint = function appendStopConstraint(
   constraints: string[],
-  stop: unknown
+  stop: ParsedArgumentValue
 ) {
-  if (typeof stop === "string") {
+  if (isStringValue(stop)) {
     constraints.push(`Do not include text after this stop sequence: ${stop}`);
   } else if (Array.isArray(stop) && stop.length) {
     constraints.push(`Stop before any of these sequences: ${stop.join(", ")}`);
@@ -2149,9 +2303,9 @@ const appendStopConstraint = function appendStopConstraint(
 
 const appendJsonConstraint = function appendJsonConstraint(
   constraints: string[],
-  format: unknown
+  format: ParsedArgumentValue
 ) {
-  if (!isRecord(format)) {
+  if (!isParsedArgumentRecord(format)) {
     return;
   }
   if (format.type === "json_object") {
@@ -2160,7 +2314,7 @@ const appendJsonConstraint = function appendJsonConstraint(
     );
   }
   if (format.type === "json_schema") {
-    const schema = isRecord(format.json_schema)
+    const schema = isParsedArgumentRecord(format.json_schema)
       ? format.json_schema.schema
       : format.schema;
     constraints.push(
@@ -2171,7 +2325,7 @@ const appendJsonConstraint = function appendJsonConstraint(
 
 const appendChatOptions = function appendChatOptions(
   transcript: string[],
-  record: Record<string, unknown>
+  record: ParsedArgumentRecord
 ) {
   const constraints: string[] = [];
   const maxTokens = integerOrNull(
@@ -2194,7 +2348,7 @@ const appendChatOptions = function appendChatOptions(
 };
 
 const includeStreamUsage = function includeStreamUsage(
-  record: Record<string, unknown>
+  record: ParsedArgumentRecord
 ): boolean {
   return (
     isRecord(record.stream_options) &&
@@ -2202,8 +2356,10 @@ const includeStreamUsage = function includeStreamUsage(
   );
 };
 
-const numberOrNull = function numberOrNull(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+const numberOrNull = function numberOrNull(
+  value: ParsedArgumentValue
+): number | null {
+  return Number.isFinite(value) ? Number(value) : null;
 };
 
 const chatSystemDirective = function chatSystemDirective(
@@ -2221,27 +2377,27 @@ const chatSystemDirective = function chatSystemDirective(
 
 const appendChatMessageToTranscript = function appendChatMessageToTranscript(
   transcript: string[],
-  item: Record<string, unknown>,
+  item: OpenAiMessageRecord,
   workspaceMutationRequired: boolean
 ) {
-  const role = typeof item.role === "string" ? item.role : "user";
+  const role = isStringValue(item.role) ? item.role : "user";
   const { text, images: messageImages } = contentToTextAndImages(
     item.content,
     role
   );
   if (role === "tool") {
-    const toolCallId =
-      typeof item.tool_call_id === "string" ? item.tool_call_id : "";
-    const toolName = typeof item.name === "string" ? item.name : "";
+    const toolCallId = isStringValue(item.tool_call_id)
+      ? item.tool_call_id
+      : "";
+    const toolName = isStringValue(item.name) ? item.name : "";
     const label = [
       toolName ? `name=${toolName}` : "",
       toolCallId ? `tool_call_id=${toolCallId}` : "",
     ]
       .filter(Boolean)
       .join(" ");
-    transcript.push(
-      `TOOL RESULT${label ? ` (${label})` : ""}: ${text || "[empty]"}`
-    );
+    const labelSuffix = label ? ` (${label})` : "";
+    transcript.push(`TOOL RESULT${labelSuffix}: ${text || "[empty]"}`);
   } else {
     let messageText = text || "[empty]";
     if (workspaceMutationRequired && role === "user") {
@@ -2257,8 +2413,21 @@ const appendChatMessageToTranscript = function appendChatMessageToTranscript(
   return messageImages;
 };
 
+interface ChatRequestBody extends ParsedArgumentRecord {
+  messages?: OpenAiMessageRecord[];
+}
+
+const DEFAULT_CHAT_MODEL = `composer-${2}.5`;
+
+/**
+ * Prepares a Chat Completions request for the Cursor API.
+ * @param body - The parsed chat request body.
+ * @param cursorModel - The selected Cursor model, if available.
+ * @param options - Optional request preparation settings.
+ * @returns The normalized request and prompt metadata.
+ */
 export const prepareChatRequest = function prepareChatRequest(
-  body: unknown,
+  body: ChatRequestBody,
   cursorModel:
     | {
         id: string;
@@ -2268,8 +2437,8 @@ export const prepareChatRequest = function prepareChatRequest(
     forceAgentMode?: boolean;
   } = {}
 ): PreparedRequest {
-  const record = expectRecord(body, "body");
-  const messages = expectArray(record.messages, "messages");
+  const record = body;
+  const messages = record.messages ?? [];
   validateCommonUnsupported(record);
   if (record.functions !== undefined) {
     throw new HttpError(
@@ -2284,9 +2453,9 @@ export const prepareChatRequest = function prepareChatRequest(
   const toolContext = toolCallContextFromMessages(messages);
   const agentMode = options.forceAgentMode === true || tools.length > 0;
   const model =
-    typeof record.model === "string" && record.model.trim()
+    isStringValue(record.model) && record.model.trim()
       ? record.model.trim()
-      : "composer-2.5";
+      : DEFAULT_CHAT_MODEL;
   const latestUserText = latestUserTextFromMessages(messages);
   const workspaceMutationRequired = shouldRequireLocalTool(
     latestUserText,
@@ -2308,7 +2477,7 @@ export const prepareChatRequest = function prepareChatRequest(
   }
   const images: CursorImage[] = [];
   for (const message of messages) {
-    const item = expectRecord(message, "messages[]");
+    const item = message;
     images.push(
       ...appendChatMessageToTranscript(
         transcript,
@@ -2319,15 +2488,18 @@ export const prepareChatRequest = function prepareChatRequest(
   }
   appendChatOptions(transcript, record);
   const text = transcript.join("\n");
+  const prompt: CursorPrompt = {
+    mode: agentMode ? "agent" : "ask",
+    text,
+  };
+  if (images.length) {
+    prompt.images = images;
+  }
   return {
     cursorModel,
     includeUsage: includeStreamUsage(record),
     model,
-    prompt: {
-      mode: agentMode ? "agent" : "ask",
-      text,
-      ...(images.length ? { images } : {}),
-    },
+    prompt,
     promptChars: text.length,
     requiresLocalTool: false,
     responseMetadata: {
@@ -2342,6 +2514,7 @@ export const prepareChatRequest = function prepareChatRequest(
 };
 
 const sdkRoutingSamples = function sdkRoutingSamples(): CursorToolCall[] {
+  const samplePath = "src/App.tsx";
   return [
     {
       arguments: {
@@ -2351,16 +2524,16 @@ const sdkRoutingSamples = function sdkRoutingSamples(): CursorToolCall[] {
       },
       name: "shell",
     },
-    { arguments: { limit: 80, offset: 1, path: "src/App.tsx" }, name: "read" },
+    { arguments: { limit: 80, offset: 1, path: samplePath }, name: "read" },
     {
-      arguments: { fileText: "<file content>", path: "src/App.tsx" },
+      arguments: { fileText: "<file content>", path: samplePath },
       name: "write",
     },
     {
       arguments: {
         newString: "<new text>",
         oldString: "<old text>",
-        path: "src/App.tsx",
+        path: samplePath,
       },
       name: "edit",
     },
@@ -2396,23 +2569,31 @@ const mcpPayloadCandidates = function mcpPayloadCandidates(): string[] {
   ];
 };
 
+const NESTED_ARGUMENT_KEYS = new Set([
+  "arguments",
+  "args",
+  "input",
+  "parameters",
+  "params",
+]);
+
 const mcpPayloadArguments = function mcpPayloadArguments(
-  args: Record<string, unknown>
-): Record<string, unknown> {
+  args: ParsedArgumentRecord
+): ParsedArgumentRecord {
   return recordArgumentValue(firstArg(args, mcpPayloadCandidates())) ?? {};
 };
 
 const normalizeMCPWrapperArguments = function normalizeMCPWrapperArguments(
-  args: Record<string, unknown>,
-  schema: ToolParameterSchemaShape
-): Record<string, unknown> {
+  args: ParsedArgumentRecord,
+  schema: ToolParameterSchema
+): ParsedArgumentRecord {
   if (!schema.properties.length) {
     return args;
   }
   const normalizedProperties = new Map(
     schema.properties.map((property) => [normalizeToolName(property), property])
   );
-  const output: Record<string, unknown> = {};
+  const output: ParsedArgumentRecord = {};
   const serverKey = firstMatchingProperty(
     [
       "serverName",
@@ -2464,45 +2645,39 @@ const normalizeMCPWrapperArguments = function normalizeMCPWrapperArguments(
 };
 
 const expandToolArguments = function expandToolArguments(
-  args: Record<string, unknown>
-): Record<string, unknown> {
-  const output: Record<string, unknown> = {};
+  args: ParsedArgumentRecord
+): ParsedArgumentRecord {
+  const output: ParsedArgumentRecord = {};
   for (const [key, value] of Object.entries(args)) {
     const normalized = normalizeToolName(key);
     const nested = recordArgumentValue(value);
-    if (
-      nested &&
-      ["arguments", "args", "input", "parameters", "params"].includes(
-        normalized
-      )
-    ) {
+    if (nested && NESTED_ARGUMENT_KEYS.has(normalized)) {
       Object.assign(output, expandToolArguments(nested));
-      continue;
-    }
-    if (nested && normalized === "targeting") {
+    } else if (nested && normalized === "targeting") {
       Object.assign(output, expandToolArguments(nested));
-      continue;
+    } else {
+      output[key] = value;
     }
-    output[key] = value;
   }
   return output;
 };
 
 const firstNumberArg = function firstNumberArg(
-  args: Record<string, unknown>,
+  args: ParsedArgumentRecord,
   ...keys: string[]
 ): number | undefined {
   for (const key of keys) {
     const value = args[key];
-    if (typeof value === "number" && Number.isFinite(value)) {
-      return value;
+    const numberValue = Number(value);
+    if (value === numberValue && Number.isFinite(numberValue)) {
+      return numberValue;
     }
   }
   return undefined;
 };
 
 const viewRangeFromArgs = function viewRangeFromArgs(
-  args: Record<string, unknown>
+  args: ParsedArgumentRecord
 ): number[] | undefined {
   const offset = firstNumberArg(
     args,
@@ -2530,10 +2705,10 @@ const viewRangeFromArgs = function viewRangeFromArgs(
 };
 
 const strReplaceEditorArguments = function strReplaceEditorArguments(
-  args: Record<string, unknown>,
+  args: ParsedArgumentRecord,
   emittedCanonical: string,
   tool: OpenAiToolSpec | undefined
-): Record<string, unknown> {
+): ParsedArgumentRecord {
   const schema = toolParameterSchema(tool);
   const properties = schema.properties.length
     ? schema.properties
@@ -2541,8 +2716,8 @@ const strReplaceEditorArguments = function strReplaceEditorArguments(
   const normalizedProperties = new Map(
     properties.map((property) => [normalizeToolName(property), property])
   );
-  const output: Record<string, unknown> = {};
-  const set = (candidates: string[], value: unknown) => {
+  const output: ParsedArgumentRecord = {};
+  const set = (candidates: string[], value: ParsedArgumentValue) => {
     const key = firstMatchingProperty(
       candidates,
       properties,
@@ -2588,21 +2763,30 @@ const strReplaceEditorArguments = function strReplaceEditorArguments(
 const toolPropertySchema = function toolPropertySchema(
   tool: OpenAiToolSpec | undefined,
   property: string
-): unknown {
-  return toolParameterSchema(tool).propertySchemas[property];
+): ParsedArgumentRecord | undefined {
+  const value = toolParameterSchema(tool).propertySchemas[property];
+  if (
+    !isParsedArgumentValue(value) ||
+    value === null ||
+    Array.isArray(value) ||
+    !(value instanceof Object)
+  ) {
+    return undefined;
+  }
+  return parseArgumentRecord(value);
 };
 
 const stringEnumValues = function stringEnumValues(
   tool: OpenAiToolSpec | undefined,
   property: string
 ): string[] {
-  const propertySchema = toolPropertySchema(tool, property);
-  if (!isRecord(propertySchema)) {
+  const schemaRecord = toolPropertySchema(tool, property);
+  if (!schemaRecord) {
     return [];
   }
   return unionStringArrays(
-    propertySchema.enum,
-    propertySchema.const === undefined ? undefined : [propertySchema.const]
+    schemaRecord.enum,
+    schemaRecord.const === undefined ? undefined : [schemaRecord.const]
   );
 };
 
@@ -2611,14 +2795,15 @@ const operationValue = function operationValue(
   property: string,
   canonical: string
 ): string {
-  const candidates: Record<string, string[]> = {
-    delete: ["delete", "remove"],
-    edit: ["replace", "str_replace", "edit", "update"],
-    read: ["read", "view", "open"],
-    write: ["write", "create", "overwrite", "replace"],
-  };
+  const candidates = new Map([
+    ["delete", ["delete", "remove"]],
+    ["edit", ["replace", "str_replace", "edit", "update"]],
+    ["read", ["read", "view", "open"]],
+    ["write", ["write", "create", "overwrite", "replace"]],
+  ]);
   const allowed = stringEnumValues(tool, property);
-  for (const candidate of candidates[canonical] ?? [canonical]) {
+  const operations = candidates.get(canonical) ?? [canonical];
+  for (const candidate of operations) {
     const allowedMatch = allowed.find(
       (value) => normalizeToolName(value) === normalizeToolName(candidate)
     );
@@ -2626,7 +2811,7 @@ const operationValue = function operationValue(
       return allowedMatch;
     }
   }
-  return (candidates[canonical] ?? [canonical])[0];
+  return operations[0];
 };
 
 const toolPropertyPrefersSecondsTimeout =
@@ -2643,11 +2828,8 @@ const toolPropertyPrefersSecondsTimeout =
     if (["timeoutseconds", "seconds"].includes(normalizedProperty)) {
       return true;
     }
-    const schema = toolPropertySchema(tool, property);
-    const description =
-      isRecord(schema) && typeof schema.description === "string"
-        ? schema.description.toLowerCase()
-        : "";
+    const schemaRecord = toolPropertySchema(tool, property);
+    const description = String(schemaRecord?.description ?? "").toLowerCase();
     return (
       /\bseconds?\b/u.test(description) &&
       !/\bmilliseconds?\b|\bms\b/u.test(description)
@@ -2673,11 +2855,8 @@ const toolPropertyPrefersAbsolutePath =
     tool: OpenAiToolSpec | undefined,
     property: string
   ): boolean {
-    const schema = toolPropertySchema(tool, property);
-    const description =
-      isRecord(schema) && typeof schema.description === "string"
-        ? schema.description.toLowerCase()
-        : "";
+    const schemaRecord = toolPropertySchema(tool, property);
+    const description = String(schemaRecord?.description ?? "").toLowerCase();
     if (description.includes("absolute path")) {
       return true;
     }
@@ -2707,16 +2886,25 @@ const normalizePosixPath = function normalizePosixPath(value: string): string {
   }
   const parts: string[] = [];
   for (const part of value.split("/")) {
-    if (!part || part === ".") {
-      continue;
+    if (part && part !== ".") {
+      if (part === "..") {
+        parts.pop();
+      } else {
+        parts.push(part);
+      }
     }
-    if (part === "..") {
-      parts.pop();
-      continue;
-    }
-    parts.push(part);
   }
   return `/${parts.join("/")}`;
+};
+
+const trimTrailingPathSeparators = function trimTrailingPathSeparators(
+  value: string
+): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") {
+    end -= 1;
+  }
+  return value.slice(0, end);
 };
 
 const absolutizeToolPath = function absolutizeToolPath(
@@ -2743,24 +2931,25 @@ const absolutizeToolPath = function absolutizeToolPath(
   if (!base || !base.startsWith("/")) {
     return trimmed;
   }
-  return normalizePosixPath(`${base.replace(/\/+$/u, "")}/${trimmed}`);
+  return normalizePosixPath(`${trimTrailingPathSeparators(base)}/${trimmed}`);
 };
 
 const normalizeToolArgumentValue = function normalizeToolArgumentValue(
-  value: unknown,
+  value: ParsedArgumentValue,
   targetProperty: string,
   tool: OpenAiToolSpec | undefined,
   context?: ToolCallContext,
   sourceProperty?: string
-): unknown {
+): ParsedArgumentValue {
+  const numberValue = Number(value);
   if (
-    typeof value === "number" &&
-    Number.isFinite(value) &&
+    value === numberValue &&
+    Number.isFinite(numberValue) &&
     toolPropertyPrefersSecondsTimeout(tool, targetProperty)
   ) {
-    return normalizeTimeoutForSecondsTool(value, sourceProperty);
+    return normalizeTimeoutForSecondsTool(numberValue, sourceProperty);
   }
-  if (typeof value !== "string") {
+  if (String(value) !== value) {
     return value;
   }
   if (!toolPropertyPrefersAbsolutePath(tool, targetProperty)) {
@@ -2770,10 +2959,10 @@ const normalizeToolArgumentValue = function normalizeToolArgumentValue(
 };
 
 const copyOptionalArgument = function copyOptionalArgument(
-  output: Record<string, unknown>,
+  output: ParsedArgumentRecord,
   properties: string[],
   normalizedProperties: Map<string, string>,
-  args: Record<string, unknown>,
+  args: ParsedArgumentRecord,
   candidates: string[]
 ) {
   const value = firstArg(args, candidates);
@@ -2788,11 +2977,11 @@ const copyOptionalArgument = function copyOptionalArgument(
 };
 
 const commandStyleFileArguments = function commandStyleFileArguments(
-  args: Record<string, unknown>,
+  args: ParsedArgumentRecord,
   emittedCanonical: string,
   tool: OpenAiToolSpec | undefined,
   context?: ToolCallContext
-): Record<string, unknown> | undefined {
+): ParsedArgumentRecord | undefined {
   if (!["write", "read", "edit", "delete"].includes(emittedCanonical)) {
     return undefined;
   }
@@ -2821,7 +3010,7 @@ const commandStyleFileArguments = function commandStyleFileArguments(
   if (!operationKey || !pathKey || !shouldIncludeOptionalPath(path)) {
     return undefined;
   }
-  const output: Record<string, unknown> = {
+  const output: ParsedArgumentRecord = {
     [operationKey]: operationValue(tool, operationKey, emittedCanonical),
     [pathKey]: normalizeToolArgumentValue(path, pathKey, tool, context),
   };
@@ -2877,25 +3066,29 @@ const patchLines = function patchLines(
   text: string,
   prefix: "+" | "-"
 ): string[] {
+  const emptyLine = "";
   const lines = text.split(/\r?\n/u);
   if (lines.length === 0) {
-    return [`${prefix}`];
+    return [prefix];
   }
   if (lines.at(-1) === "") {
     lines.pop();
   }
-  return (lines.length ? lines : [""]).map((line) => `${prefix}${line}`);
+  return (lines.length ? lines : [emptyLine]).map((line) => `${prefix}${line}`);
 };
+
+const PATCH_BEGIN = "*** Begin Patch";
+const PATCH_END = "*** End Patch";
 
 const addFilePatch = function addFilePatch(
   path: string,
   content: string
 ): string {
   return [
-    "*** Begin Patch",
+    PATCH_BEGIN,
     `*** Add File: ${path}`,
     ...patchLines(content, "+"),
-    "*** End Patch",
+    PATCH_END,
   ].join("\n");
 };
 
@@ -2905,27 +3098,62 @@ const updateFilePatch = function updateFilePatch(
   newText: string
 ): string {
   return [
-    "*** Begin Patch",
+    PATCH_BEGIN,
     `*** Update File: ${path}`,
     "@@",
     ...patchLines(oldText, "-"),
     ...patchLines(newText, "+"),
-    "*** End Patch",
+    PATCH_END,
   ].join("\n");
 };
 
 const deleteFilePatch = function deleteFilePatch(path: string): string {
-  return ["*** Begin Patch", `*** Delete File: ${path}`, "*** End Patch"].join(
-    "\n"
-  );
+  return [PATCH_BEGIN, `*** Delete File: ${path}`, PATCH_END].join("\n");
+};
+
+const filePatchForToolCall = function filePatchForToolCall(
+  args: ParsedArgumentRecord,
+  emittedCanonical: string,
+  path: string | undefined
+): string | undefined {
+  if (emittedCanonical === "write") {
+    if (!path) {
+      return undefined;
+    }
+    const content = firstStringArgAllowEmpty(args, ...fileContentCandidates());
+    return content === undefined ? undefined : addFilePatch(path, content);
+  }
+  if (emittedCanonical === "edit") {
+    const patchContent = firstStringArgAllowEmpty(
+      args,
+      "patchContent",
+      "patch_content",
+      "patch",
+      "diff",
+      "unifiedDiff",
+      "unified_diff"
+    );
+    if (patchContent !== undefined) {
+      return patchContent;
+    }
+    if (!path) {
+      return undefined;
+    }
+    const oldText = firstStringArgAllowEmpty(args, ...oldTextCandidates());
+    const newText = firstStringArgAllowEmpty(args, ...newTextCandidates());
+    return oldText === undefined || newText === undefined
+      ? undefined
+      : updateFilePatch(path, oldText, newText);
+  }
+  return path ? deleteFilePatch(path) : undefined;
 };
 
 const patchStyleFileArguments = function patchStyleFileArguments(
-  args: Record<string, unknown>,
+  args: ParsedArgumentRecord,
   emittedCanonical: string,
   tool: OpenAiToolSpec | undefined,
   context?: ToolCallContext
-): Record<string, unknown> | undefined {
+): ParsedArgumentRecord | undefined {
   if (!["write", "edit", "delete"].includes(emittedCanonical)) {
     return undefined;
   }
@@ -2950,46 +3178,11 @@ const patchStyleFileArguments = function patchStyleFileArguments(
     "target_file",
     "targetFile"
   );
-  let patch: string | undefined;
-  if (emittedCanonical === "write") {
-    if (!path) {
-      return undefined;
-    }
-    const content = firstStringArgAllowEmpty(args, ...fileContentCandidates());
-    if (content === undefined) {
-      return undefined;
-    }
-    patch = addFilePatch(path, content);
-  } else if (emittedCanonical === "edit") {
-    const patchContent = firstStringArgAllowEmpty(
-      args,
-      "patchContent",
-      "patch_content",
-      "patch",
-      "diff",
-      "unifiedDiff",
-      "unified_diff"
-    );
-    if (patchContent === undefined) {
-      if (!path) {
-        return undefined;
-      }
-      const oldText = firstStringArgAllowEmpty(args, ...oldTextCandidates());
-      const newText = firstStringArgAllowEmpty(args, ...newTextCandidates());
-      if (oldText === undefined || newText === undefined) {
-        return undefined;
-      }
-      patch = updateFilePatch(path, oldText, newText);
-    } else {
-      patch = patchContent;
-    }
-  } else {
-    if (!path) {
-      return undefined;
-    }
-    patch = deleteFilePatch(path);
+  const patch = filePatchForToolCall(args, emittedCanonical, path);
+  if (patch === undefined) {
+    return undefined;
   }
-  const output: Record<string, unknown> = { [patchKey]: patch };
+  const output: ParsedArgumentRecord = { [patchKey]: patch };
   const pathKey = firstMatchingProperty(
     pathCandidates(),
     schema.properties,
@@ -3013,7 +3206,8 @@ const hashString = function hashString(value: string): string {
 
 const heredocDelimiter = function heredocDelimiter(content: string): string {
   for (let index = 0; index <= 100; index += 1) {
-    const delimiter = `API_FOR_CURSOR_EOF${index === 0 ? "" : `_${index}`}`;
+    const suffix = index === 0 ? "" : `_${index}`;
+    const delimiter = `API_FOR_CURSOR_EOF${suffix}`;
     if (!content.includes(delimiter)) {
       return delimiter;
     }
@@ -3026,12 +3220,12 @@ const shellQuote = function shellQuote(value: string): string {
 };
 
 const firstBooleanArg = function firstBooleanArg(
-  args: Record<string, unknown>,
+  args: ToolArgumentRecord,
   ...keys: string[]
 ): boolean | undefined {
   for (const key of keys) {
     const value = args[key];
-    if (typeof value === "boolean") {
+    if (value === true || value === false) {
       return value;
     }
   }
@@ -3060,10 +3254,12 @@ const globPathCandidates = function globPathCandidates(): string[] {
   ];
 };
 
+type ToolArgumentRecord = ParsedArgumentRecord;
+
 const looksLikeGlobPattern = function looksLikeGlobPattern(
   value: string
 ): boolean {
-  return /[*?[\]{}]/u.test(value.trim());
+  return /[*?{}\]]/u.test(value.trim()) || value.includes("[");
 };
 
 const looksLikePath = function looksLikePath(value: string): boolean {
@@ -3096,10 +3292,19 @@ const looksLikeGlobSearchRoot = function looksLikeGlobSearchRoot(
   return !looksLikeGlobPattern(trimmed) && !/\.[^/.]+$/u.test(trimmed);
 };
 
-const splitGlobTargetPath = function splitGlobTargetPath(value: string): {
+interface SplitGlobTargetPath {
   path?: string;
   pattern?: string;
-} {
+}
+
+interface NormalizedGlobArguments {
+  path?: string;
+  pattern?: string;
+}
+
+const splitGlobTargetPath = function splitGlobTargetPath(
+  value: string
+): SplitGlobTargetPath {
   const trimmed = value.trim();
   const firstGlob = trimmed.search(/[*?[\]{}]/u);
   if (firstGlob < 0) {
@@ -3116,11 +3321,27 @@ const splitGlobTargetPath = function splitGlobTargetPath(value: string): {
   return { path: base || undefined, pattern: pattern || undefined };
 };
 
+const trimSurroundingSlashes = function trimSurroundingSlashes(
+  value: string
+): string | undefined {
+  let start = 0;
+  let end = value.length;
+  while (value[start] === "/") {
+    start += 1;
+  }
+  while (value[end - 1] === "/") {
+    end -= 1;
+  }
+  return start === end ? undefined : value.slice(start, end);
+};
+
 const combineGlobPatterns = function combineGlobPatterns(
   targetPattern: string | undefined,
   pattern: string | undefined
 ): string | undefined {
-  const cleanTarget = targetPattern?.replaceAll(/^\/+|\/+$/gu, "");
+  const cleanTarget = targetPattern
+    ? trimSurroundingSlashes(targetPattern)
+    : undefined;
   const cleanPattern = pattern?.replace(/^\/+/u, "");
   if (!cleanTarget) {
     return cleanPattern;
@@ -3141,12 +3362,9 @@ const combineGlobPatterns = function combineGlobPatterns(
 };
 
 const normalizedGlobArguments = function normalizedGlobArguments(
-  args: Record<string, unknown>,
+  args: ToolArgumentRecord,
   context?: ToolCallContext
-): {
-  pattern?: string;
-  path?: string;
-} {
+): NormalizedGlobArguments {
   let pattern = firstStringArg(args, ...globPatternCandidates());
   let targetPath = firstStringArg(args, ...globPathCandidates());
   if (targetPath) {
@@ -3170,22 +3388,31 @@ const normalizedGlobArguments = function normalizedGlobArguments(
   return { path: targetPath, pattern };
 };
 
+const isString = function isString<Value>(
+  value: Value
+): value is Value & string {
+  return value === String(value);
+};
+
+const isNonEmptyString = function isNonEmptyString<Value>(
+  value: Value
+): value is Value & string {
+  return isString(value) && value.trim().length > 0;
+};
+
 const firstStringArrayArg = function firstStringArrayArg(
-  args: Record<string, unknown>,
+  args: ToolArgumentRecord,
   ...keys: string[]
 ): string[] {
   const value = firstArg(args, keys);
   if (Array.isArray(value)) {
-    return value.filter(
-      (item): item is string =>
-        typeof item === "string" && item.trim().length > 0
-    );
+    return value.filter(isNonEmptyString);
   }
-  return typeof value === "string" && value.trim() ? [value] : [];
+  return isNonEmptyString(value) ? [value] : [];
 };
 
 const shellWriteFallbackCommand = function shellWriteFallbackCommand(
-  args: Record<string, unknown>
+  args: ToolArgumentRecord
 ): string | undefined {
   const filePath = firstStringArg(args, ...pathCandidates());
   const content = firstStringArgAllowEmpty(args, ...fileContentCandidates());
@@ -3197,7 +3424,7 @@ const shellWriteFallbackCommand = function shellWriteFallbackCommand(
 };
 
 const shellReadFallbackCommand = function shellReadFallbackCommand(
-  args: Record<string, unknown>
+  args: ToolArgumentRecord
 ): string | undefined {
   const filePath = firstStringArg(args, ...pathCandidates());
   if (!filePath) {
@@ -3221,13 +3448,14 @@ const shellReadFallbackCommand = function shellReadFallbackCommand(
   if (offset !== undefined && limit !== undefined && limit > 0) {
     const start = Math.max(1, Math.floor(offset));
     const end = start + Math.floor(limit) - 1;
-    return `sed -n ${shellQuote(`${start},${end}p`)} ${shellQuote(filePath)}`;
+    const lineRange = `${start},${end}p`;
+    return `sed -n ${shellQuote(lineRange)} ${shellQuote(filePath)}`;
   }
   return `cat ${shellQuote(filePath)}`;
 };
 
 const shellEditFallbackCommand = function shellEditFallbackCommand(
-  args: Record<string, unknown>
+  args: ToolArgumentRecord
 ): string | undefined {
   const filePath = firstStringArg(args, ...pathCandidates());
   const oldString = firstStringArgAllowEmpty(args, ...oldTextCandidates());
@@ -3247,7 +3475,7 @@ const shellEditFallbackCommand = function shellEditFallbackCommand(
 };
 
 const shellGrepFallbackCommand = function shellGrepFallbackCommand(
-  args: Record<string, unknown>
+  args: ToolArgumentRecord
 ): string | undefined {
   const pattern = firstStringArg(
     args,
@@ -3289,7 +3517,7 @@ const shellGrepFallbackCommand = function shellGrepFallbackCommand(
 };
 
 const shellFallbackCommand = function shellFallbackCommand(
-  args: Record<string, unknown>,
+  args: ToolArgumentRecord,
   emittedName: string
 ): string | undefined {
   switch (canonicalToolName(emittedName)) {
@@ -3386,8 +3614,10 @@ const timeoutCandidates = function timeoutCandidates(): string[] {
   ];
 };
 
-const shellDescription = function shellDescription(command: unknown): string {
-  if (typeof command !== "string" || !command.trim()) {
+const shellDescription = function shellDescription(
+  command: string | undefined
+): string {
+  if (!command?.trim()) {
     return "Runs shell command";
   }
   const first = command.trim().split(/\s+/u).slice(0, 5).join(" ");
@@ -3413,7 +3643,7 @@ const commandLikeProperty = function commandLikeProperty(
 
 const isShellLikeTool = function isShellLikeTool(
   tool: OpenAiToolSpec | undefined,
-  originalArgs: Record<string, unknown>
+  originalArgs: ToolArgumentRecord
 ): boolean {
   const normalizedTool = normalizeToolName(tool?.name || "");
   if (
@@ -3429,12 +3659,9 @@ const isShellLikeTool = function isShellLikeTool(
 };
 
 const isSyntheticSdkWorkingDirectory = function isSyntheticSdkWorkingDirectory(
-  value: unknown
+  value: string
 ): boolean {
-  return (
-    typeof value === "string" &&
-    ["", ".", "/workspace", "workspace"].includes(value.trim())
-  );
+  return ["", ".", "/workspace", "workspace"].includes(value.trim());
 };
 
 const isAlreadyBackgroundedShellCommand =
@@ -3484,10 +3711,10 @@ const backgroundShellCommand = function backgroundShellCommand(
 
 const sanitizeNormalizedToolArguments =
   function sanitizeNormalizedToolArguments(
-    output: Record<string, unknown>,
+    output: ToolArgumentRecord,
     tool: OpenAiToolSpec | undefined,
-    originalArgs: Record<string, unknown>
-  ): Record<string, unknown> {
+    originalArgs: ToolArgumentRecord
+  ): ToolArgumentRecord {
     if (!isShellLikeTool(tool, originalArgs)) {
       return output;
     }
@@ -3509,17 +3736,15 @@ const sanitizeNormalizedToolArguments =
           schema.properties,
           normalizedProperties
         ) ?? candidate;
-      if (seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      if (!isSyntheticSdkWorkingDirectory(next[key])) {
-        continue;
-      }
-      if (required.has(key)) {
-        next[key] = ".";
-      } else {
-        keysToOmit.add(key);
+      if (!seen.has(key)) {
+        seen.add(key);
+        if (isString(next[key]) && isSyntheticSdkWorkingDirectory(next[key])) {
+          if (required.has(key)) {
+            next[key] = ".";
+          } else {
+            keysToOmit.add(key);
+          }
+        }
       }
     }
     if (keysToOmit.size) {
@@ -3528,13 +3753,12 @@ const sanitizeNormalizedToolArguments =
       );
     }
     const commandKey = commandLikeProperty(tool) ?? "command";
-    const command =
-      typeof next[commandKey] === "string"
-        ? next[commandKey]
-        : firstStringArg(originalArgs, ...shellCommandCandidates());
-    if (typeof command === "string" && shouldBackgroundShellCommand(command)) {
+    const command = isString(next[commandKey])
+      ? next[commandKey]
+      : firstStringArg(originalArgs, ...shellCommandCandidates());
+    if (command && shouldBackgroundShellCommand(command)) {
       next[commandKey] = backgroundShellCommand(command);
-      if (typeof next.description === "string") {
+      if (isString(next.description)) {
         next.description = `Starts background process: ${next.description}`;
       }
     }
@@ -3542,19 +3766,20 @@ const sanitizeNormalizedToolArguments =
   };
 
 const commandLikeValue = function commandLikeValue(
-  output: Record<string, unknown>,
+  output: ToolArgumentRecord,
   tool: OpenAiToolSpec | undefined
-): unknown {
+): string | undefined {
   const commandKey = commandLikeProperty(tool);
-  return commandKey ? output[commandKey] : output.command;
+  const value = commandKey ? output[commandKey] : output.command;
+  return isString(value) ? value : undefined;
 };
 
 const applyShellToolDefaults = function applyShellToolDefaults(
-  next: Record<string, unknown>,
+  next: ToolArgumentRecord,
   required: string[],
   tool: OpenAiToolSpec | undefined,
-  originalArgs: Record<string, unknown>,
-  schema: ToolParameterSchemaShape,
+  originalArgs: ToolArgumentRecord,
+  schema: ToolParameterSchema,
   normalizedProperties: Map<string, string>
 ): void {
   const workdirKey = firstMatchingProperty(
@@ -3565,7 +3790,7 @@ const applyShellToolDefaults = function applyShellToolDefaults(
   if (
     workdirKey &&
     required.includes(workdirKey) &&
-    !shouldIncludeOptionalPath(next[workdirKey])
+    !shouldIncludeOptionalPath(parseArgumentValue(next[workdirKey]))
   ) {
     next[workdirKey] = ".";
   }
@@ -3581,28 +3806,24 @@ const applyShellToolDefaults = function applyShellToolDefaults(
   ) {
     next[timeoutKey] = normalizeToolArgumentValue(120_000, timeoutKey, tool);
   }
-  if (
-    required.includes("description") &&
-    typeof next.description !== "string"
-  ) {
+  if (required.includes("description") && !isString(next.description)) {
     const command =
       commandLikeValue(next, tool) ??
       firstStringArg(originalArgs, ...shellCommandCandidates());
     next.description = shellDescription(command);
   }
   const commandKey = commandLikeProperty(tool) ?? "command";
-  if (required.includes(commandKey) && typeof next[commandKey] !== "string") {
+  if (required.includes(commandKey) && !isString(next[commandKey])) {
     next[commandKey] =
       firstStringArg(originalArgs, ...shellCommandCandidates()) || "";
   }
 };
 
 const applyGlobToolDefaults = function applyGlobToolDefaults(
-  next: Record<string, unknown>,
+  next: ToolArgumentRecord,
   required: string[],
-  tool: OpenAiToolSpec | undefined,
-  originalArgs: Record<string, unknown>,
-  schema: ToolParameterSchemaShape,
+  originalArgs: ToolArgumentRecord,
+  schema: ToolParameterSchema,
   normalizedProperties: Map<string, string>
 ): void {
   const requiredProperties = new Map(
@@ -3613,7 +3834,7 @@ const applyGlobToolDefaults = function applyGlobToolDefaults(
     required,
     requiredProperties
   );
-  if (patternKey && typeof next[patternKey] !== "string") {
+  if (patternKey && !isString(next[patternKey])) {
     next[patternKey] =
       firstStringArg(originalArgs, ...globPatternCandidates()) || "*";
   }
@@ -3625,18 +3846,18 @@ const applyGlobToolDefaults = function applyGlobToolDefaults(
   if (
     pathKey &&
     required.includes(pathKey) &&
-    !shouldIncludeOptionalPath(next[pathKey])
+    !shouldIncludeOptionalPath(parseArgumentValue(next[pathKey]))
   ) {
     next[pathKey] = ".";
   }
 };
 
 const applyRequiredToolDefaults = function applyRequiredToolDefaults(
-  output: Record<string, unknown>,
+  output: ToolArgumentRecord,
   required: string[],
   tool: OpenAiToolSpec | undefined,
-  originalArgs: Record<string, unknown>
-): Record<string, unknown> {
+  originalArgs: ToolArgumentRecord
+) {
   if (!required.length) {
     return output;
   }
@@ -3659,7 +3880,6 @@ const applyRequiredToolDefaults = function applyRequiredToolDefaults(
     applyGlobToolDefaults(
       next,
       required,
-      tool,
       originalArgs,
       schema,
       normalizedProperties
@@ -3669,10 +3889,10 @@ const applyRequiredToolDefaults = function applyRequiredToolDefaults(
 };
 
 const shellFallbackArguments = function shellFallbackArguments(
-  args: Record<string, unknown>,
+  args: ToolArgumentRecord,
   emittedName: string,
   tool: OpenAiToolSpec | undefined
-): Record<string, unknown> {
+): ToolArgumentRecord {
   const schema = toolParameterSchema(tool);
   const normalizedProperties = new Map(
     schema.properties.map((property) => [normalizeToolName(property), property])
@@ -3686,7 +3906,8 @@ const shellFallbackArguments = function shellFallbackArguments(
   if (!commandKey || !command) {
     return args;
   }
-  const output: Record<string, unknown> = { [commandKey]: command };
+  const output = Object.fromEntries([]);
+  output[commandKey] = command;
   const workdir = firstArg(args, shellExplicitWorkdirCandidates());
   const workdirKey = firstMatchingProperty(
     shellExplicitWorkdirCandidates(),
@@ -3721,15 +3942,15 @@ const shellFallbackArguments = function shellFallbackArguments(
 };
 
 const listAsGlobArguments = function listAsGlobArguments(
-  args: Record<string, unknown>,
+  args: ToolArgumentRecord,
   tool: OpenAiToolSpec | undefined,
   context?: ToolCallContext
-): Record<string, unknown> {
+): ToolArgumentRecord {
   const schema = toolParameterSchema(tool);
   const normalizedProperties = new Map(
     schema.properties.map((property) => [normalizeToolName(property), property])
   );
-  const output: Record<string, unknown> = {};
+  const output: ToolArgumentRecord = {};
   const patternKey = firstMatchingProperty(
     globPatternCandidates(),
     schema.properties,
@@ -3753,15 +3974,15 @@ const listAsGlobArguments = function listAsGlobArguments(
 };
 
 const globArguments = function globArguments(
-  args: Record<string, unknown>,
+  args: ToolArgumentRecord,
   tool: OpenAiToolSpec | undefined,
   context?: ToolCallContext
-): Record<string, unknown> {
+): ToolArgumentRecord {
   const schema = toolParameterSchema(tool);
   const normalizedProperties = new Map(
     schema.properties.map((property) => [normalizeToolName(property), property])
   );
-  const output: Record<string, unknown> = {};
+  const output: ToolArgumentRecord = {};
   const { pattern, path } = normalizedGlobArguments(args, context);
   const patternKey = firstMatchingProperty(
     globPatternCandidates(),
@@ -4025,26 +4246,57 @@ const shellToolArgumentAliases = function shellToolArgumentAliases(
   return [];
 };
 
+interface ToolArgumentAliasRule {
+  candidates: string[];
+  priority: number;
+}
+
+const webToolArgumentAliases = function webToolArgumentAliases(
+  tool: string,
+  normalized: string
+): ToolArgumentAliasRule[] {
+  if (!["webfetch", "fetch", "web"].includes(tool)) {
+    return [];
+  }
+  if (["url", "uri", "href"].includes(normalized)) {
+    return [{ candidates: ["url", "uri", "href"], priority: 95 }];
+  }
+  return ["prompt", "query", "instructions"].includes(normalized)
+    ? [{ candidates: ["prompt", "query", "instructions"], priority: 90 }]
+    : [];
+};
+
+const taskToolArgumentAliases = function taskToolArgumentAliases(
+  tool: string,
+  normalized: string
+): ToolArgumentAliasRule[] {
+  if (["todowrite", "todo"].includes(tool)) {
+    return ["todos", "tasks", "items"].includes(normalized)
+      ? [{ candidates: ["todos", "tasks", "items"], priority: 95 }]
+      : [];
+  }
+  if (tool !== "task") {
+    return [];
+  }
+  if (["prompt", "instructions", "query"].includes(normalized)) {
+    return [
+      { candidates: ["prompt", "description", "instructions"], priority: 90 },
+    ];
+  }
+  return ["subagenttype", "agent", "agenttype"].includes(normalized)
+    ? [{ candidates: ["subagent_type", "subagentType", "agent"], priority: 90 }]
+    : [];
+};
+
 const toolSpecificArgumentAliases = function toolSpecificArgumentAliases(
   tool: string,
   normalized: string
-): {
-  candidates: string[];
-  priority: number;
-}[] {
-  if (isGlobLikeToolName(tool)) {
-    const globAliases = globToolArgumentAliases(normalized);
-    if (globAliases.length) {
-      return globAliases;
-    }
-  }
-  if (["grep", "search", "searchfiles"].includes(tool)) {
-    const grepAliases = grepToolArgumentAliases(normalized);
-    if (grepAliases.length) {
-      return grepAliases;
-    }
-  }
-  if (
+): ToolArgumentAliasRule[] {
+  const toolAliasGroups = [
+    isGlobLikeToolName(tool) ? globToolArgumentAliases(normalized) : [],
+    ["grep", "search", "searchfiles"].includes(tool)
+      ? grepToolArgumentAliases(normalized)
+      : [],
     [
       "read",
       "readfile",
@@ -4057,65 +4309,21 @@ const toolSpecificArgumentAliases = function toolSpecificArgumentAliases(
       "replacefile",
       "searchreplace",
     ].includes(tool)
-  ) {
-    const fileAliases = fileToolArgumentAliases(tool, normalized);
-    if (fileAliases.length) {
-      return fileAliases;
-    }
-  }
-  if (["bash", "shell", "terminal", "runterminalcmd"].includes(tool)) {
-    const shellAliases = shellToolArgumentAliases(normalized);
-    if (shellAliases.length) {
-      return shellAliases;
-    }
-  }
-  if (["webfetch", "fetch", "web"].includes(tool)) {
-    if (["url", "uri", "href"].includes(normalized)) {
-      return [{ candidates: ["url", "uri", "href"], priority: 95 }];
-    }
-    if (["prompt", "query", "instructions"].includes(normalized)) {
-      return [
-        { candidates: ["prompt", "query", "instructions"], priority: 90 },
-      ];
-    }
-  }
-  if (
-    ["todowrite", "todo"].includes(tool) &&
-    ["todos", "tasks", "items"].includes(normalized)
-  ) {
-    return [{ candidates: ["todos", "tasks", "items"], priority: 95 }];
-  }
-  if (tool === "task") {
-    if (["prompt", "instructions", "query"].includes(normalized)) {
-      return [
-        { candidates: ["prompt", "description", "instructions"], priority: 90 },
-      ];
-    }
-    if (["subagenttype", "agent", "agenttype"].includes(normalized)) {
-      return [
-        {
-          candidates: ["subagent_type", "subagentType", "agent"],
-          priority: 90,
-        },
-      ];
-    }
-  }
-  return [];
+      ? fileToolArgumentAliases(tool, normalized)
+      : [],
+    ["bash", "shell", "terminal", "runterminalcmd"].includes(tool)
+      ? shellToolArgumentAliases(normalized)
+      : [],
+    webToolArgumentAliases(tool, normalized),
+    taskToolArgumentAliases(tool, normalized),
+  ];
+  return toolAliasGroups.find((group) => group.length > 0) ?? [];
 };
 
 const commonArgumentAliases = function commonArgumentAliases(
   normalized: string
-): {
-  candidates: string[];
-  priority: number;
-}[] {
-  const aliases: Record<
-    string,
-    {
-      candidates: string[];
-      priority: number;
-    }[]
-  > = {
+): ToolArgumentAliasRule[] {
+  const aliases = {
     absolutepath: [{ candidates: pathCandidates(), priority: 80 }],
     code: [{ candidates: shellCommandCandidates(), priority: 60 }],
     command: [{ candidates: shellCommandCandidates(), priority: 90 }],
@@ -4191,7 +4399,7 @@ const commonArgumentAliases = function commonArgumentAliases(
     timeoutms: [{ candidates: timeoutCandidates(), priority: 95 }],
     timeoutseconds: [{ candidates: timeoutCandidates(), priority: 95 }],
     url: [{ candidates: ["url", "uri", "href"], priority: 90 }],
-  };
+  } satisfies Record<string, ToolArgumentAliasRule[]>;
   if (normalized === "workingdirectory" || normalized === "workingdir") {
     return [{ candidates: shellWorkdirCandidates(), priority: 90 }];
   }
@@ -4220,7 +4428,9 @@ const commonArgumentAliases = function commonArgumentAliases(
   if (normalized === "todo" || normalized === "items") {
     return [{ candidates: ["todos", "items", "tasks"], priority: 70 }];
   }
-  return aliases[normalized] ?? [];
+  return (
+    Object.entries(aliases).find(([alias]) => alias === normalized)?.[1] ?? []
+  );
 };
 
 const aliasToolArgument = function aliasToolArgument(
@@ -4271,20 +4481,31 @@ const mapToolArgument = function mapToolArgument(
   return aliasToolArgument(key, properties, normalizedProperties, toolName);
 };
 
+const parseToolArgumentRecord = function parseToolArgumentRecord(
+  input: ToolArgumentRecord
+): ParsedArgumentRecord {
+  const parsed: ParsedArgumentRecord = {};
+  for (const [key, value] of Object.entries(input)) {
+    parsed[key] = value;
+  }
+  return parsed;
+};
+
 const specializedToolArguments = function specializedToolArguments(
-  argsToNormalize: Record<string, unknown>,
+  argsToNormalize: ToolArgumentRecord,
   emittedCanonical: string,
   selectedCanonical: string,
   selectedTool: string,
   emittedName: string,
   tool: OpenAiToolSpec | undefined,
   context?: ToolCallContext
-): Record<string, unknown> | undefined {
+): ToolArgumentRecord | undefined {
+  const parsedArguments = parseToolArgumentRecord(argsToNormalize);
   if (selectedTool === "strreplaceeditor") {
-    return strReplaceEditorArguments(argsToNormalize, emittedCanonical, tool);
+    return strReplaceEditorArguments(parsedArguments, emittedCanonical, tool);
   }
   const commandStyleFile = commandStyleFileArguments(
-    argsToNormalize,
+    parsedArguments,
     emittedCanonical,
     tool,
     context
@@ -4293,7 +4514,7 @@ const specializedToolArguments = function specializedToolArguments(
     return commandStyleFile;
   }
   const patchStyleFile = patchStyleFileArguments(
-    argsToNormalize,
+    parsedArguments,
     emittedCanonical,
     tool,
     context
@@ -4302,29 +4523,30 @@ const specializedToolArguments = function specializedToolArguments(
     return patchStyleFile;
   }
   if (emittedCanonical !== "shell" && selectedCanonical === "shell") {
-    return shellFallbackArguments(argsToNormalize, emittedName, tool);
+    return shellFallbackArguments(parsedArguments, emittedName, tool);
   }
   if (emittedCanonical === "ls" && selectedCanonical === "glob") {
-    return listAsGlobArguments(argsToNormalize, tool, context);
+    return listAsGlobArguments(parsedArguments, tool, context);
   }
   if (emittedCanonical === "glob" && selectedCanonical === "glob") {
-    return globArguments(argsToNormalize, tool, context);
+    return globArguments(parsedArguments, tool, context);
   }
   return undefined;
 };
 
 const mapNormalizedToolArguments = function mapNormalizedToolArguments(
-  argsToNormalize: Record<string, unknown>,
+  argsToNormalize: ToolArgumentRecord,
   tool: OpenAiToolSpec | undefined,
-  schema: ToolParameterSchemaShape,
+  schema: ToolParameterSchema,
   context?: ToolCallContext
-): Record<string, unknown> {
+) {
+  const parsedArguments = parseToolArgumentRecord(argsToNormalize);
   const normalizedProperties = new Map(
     schema.properties.map((property) => [normalizeToolName(property), property])
   );
-  const output: Record<string, unknown> = {};
+  const output: ToolArgumentRecord = {};
   const priorities = new Map<string, number>();
-  for (const [key, value] of Object.entries(argsToNormalize)) {
+  for (const [key, value] of Object.entries(parsedArguments)) {
     const mapped = mapToolArgument(
       key,
       schema.properties,
@@ -4353,21 +4575,22 @@ const mapNormalizedToolArguments = function mapNormalizedToolArguments(
 };
 
 const normalizeToolArguments = function normalizeToolArguments(
-  args: Record<string, unknown>,
+  args: ToolArgumentRecord,
   tool: OpenAiToolSpec | undefined,
   emittedName = "",
   wrapperDepth = 0,
   context?: ToolCallContext
-): Record<string, unknown> {
+): ToolArgumentRecord {
+  const parsedArgs = parseToolArgumentRecord(args);
   const normalizeWrapperObjectArguments =
     function normalizeWrapperObjectArguments(
-      wrapperArgs: Record<string, unknown>,
+      wrapperArgs: ParsedArgumentRecord,
       wrapperTool: OpenAiToolSpec | undefined,
       wrapperEmittedName: string,
-      wrapperSchema: ToolParameterSchemaShape,
+      wrapperSchema: ToolParameterSchema,
       wrapperDepthLevel: number,
       wrapperContext?: ToolCallContext
-    ): Record<string, unknown> | undefined {
+    ): ToolArgumentRecord | undefined {
       if (!wrapperTool || wrapperDepthLevel > 1) {
         return undefined;
       }
@@ -4387,7 +4610,9 @@ const normalizeToolArguments = function normalizeToolArguments(
         {
           description: wrapperTool.description,
           name: wrapperTool.name,
-          parameters: wrapper.parameters,
+          parameters: isParsedArgumentValue(wrapper.parameters)
+            ? wrapper.parameters
+            : {},
         },
         nestedEmittedName,
         wrapperDepthLevel + 1,
@@ -4401,12 +4626,12 @@ const normalizeToolArguments = function normalizeToolArguments(
   const selectedCanonical = canonicalToolName(tool?.name || "");
   const selectedTool = normalizeToolName(tool?.name || "");
   if (emittedCanonical === "mcp" && selectedCanonical === "mcp") {
-    return normalizeMCPWrapperArguments(args, schema);
+    return normalizeMCPWrapperArguments(parsedArgs, schema);
   }
   const argsToNormalize =
     emittedCanonical === "mcp"
-      ? expandToolArguments(mcpPayloadArguments(args))
-      : expandToolArguments(args);
+      ? expandToolArguments(mcpPayloadArguments(parsedArgs))
+      : expandToolArguments(parsedArgs);
   if (!schema.properties.length) {
     return argsToNormalize;
   }
@@ -4446,19 +4671,92 @@ const normalizeToolArguments = function normalizeToolArguments(
   );
 };
 
-const schemaJsonTypes = function schemaJsonTypes(
-  schema: Record<string, unknown>
-): string[] {
-  if (typeof schema.type === "string") {
-    return [schema.type];
+type ToolJsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | ToolJsonValue[]
+  | ToolJsonObject;
+
+interface ToolJsonObject {
+  [key: string]: ToolJsonValue;
+}
+
+const isToolJsonValue = function isToolJsonValue(
+  value: unknown
+): value is ToolJsonValue {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "boolean"
+  ) {
+    return true;
   }
-  return Array.isArray(schema.type)
-    ? schema.type.filter((item): item is string => typeof item === "string")
-    : [];
+  if (typeof value === "number") {
+    return Number.isFinite(value);
+  }
+  if (Array.isArray(value)) {
+    return value.every(isToolJsonValue);
+  }
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Object.values(value).every(isToolJsonValue)
+  );
+};
+
+function isToolJsonObject(
+  value: ToolJsonValue | ToolArgumentRecord
+): value is ToolSchemaObject;
+function isToolJsonObject(
+  value: ToolJsonValue | ToolArgumentRecord
+): value is ToolSchemaObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+interface ToolSchemaObject {
+  [key: string]: ToolJsonValue;
+  properties?: ToolJsonObject;
+  required?: string[];
+  additionalProperties?: boolean | ToolSchemaObject;
+  items?: false | ToolSchemaObject;
+  prefixItems?: ToolSchemaObject[];
+  minItems?: number;
+  maxItems?: number;
+  anyOf?: ToolSchemaObject[];
+  oneOf?: ToolSchemaObject[];
+  allOf?: ToolSchemaObject[];
+  type?: string | string[];
+  enum?: ToolJsonValue[];
+  const?: ToolJsonValue;
+}
+
+interface ToolSchemaTypeSource {
+  type?: unknown;
+}
+
+const schemaJsonTypes = function schemaJsonTypes(
+  schema: ToolSchemaObject | ToolSchemaTypeSource
+): string[] {
+  if (schema.type === undefined) {
+    return [];
+  }
+  if (Array.isArray(schema.type)) {
+    const types: string[] = [];
+    for (const item of schema.type) {
+      if (String(item) === item) {
+        types.push(String(item));
+      }
+    }
+    return types;
+  }
+  return String(schema.type) === schema.type ? [String(schema.type)] : [];
 };
 
 const schemaAllowsJsonType = function schemaAllowsJsonType(
-  schema: Record<string, unknown>,
+  schema: ToolSchemaObject,
   type: string
 ): boolean {
   const types = schemaJsonTypes(schema);
@@ -4466,27 +4764,27 @@ const schemaAllowsJsonType = function schemaAllowsJsonType(
 };
 
 const jsonValueMatchesType = function jsonValueMatchesType(
-  value: unknown,
+  value: ToolJsonValue,
   type: string
 ): boolean {
   switch (type) {
     case "string": {
-      return typeof value === "string";
+      return String(value) === value;
     }
     case "number": {
-      return typeof value === "number" && Number.isFinite(value);
+      return Number.isFinite(value);
     }
     case "integer": {
-      return typeof value === "number" && Number.isInteger(value);
+      return Number.isInteger(value);
     }
     case "boolean": {
-      return typeof value === "boolean";
+      return value === true || value === false;
     }
     case "array": {
       return Array.isArray(value);
     }
     case "object": {
-      return isRecord(value) && !Array.isArray(value);
+      return isToolJsonObject(value);
     }
     case "null": {
       return value === null;
@@ -4498,12 +4796,12 @@ const jsonValueMatchesType = function jsonValueMatchesType(
 };
 
 const objectConstraintsApply = function objectConstraintsApply(
-  schema: Record<string, unknown>,
-  value: unknown,
+  schema: ToolSchemaObject,
+  value: ToolJsonValue,
   types: string[]
 ): boolean {
   if (
-    !isRecord(schema.properties) &&
+    schema.properties === undefined &&
     !Array.isArray(schema.required) &&
     schema.additionalProperties === undefined
   ) {
@@ -4516,8 +4814,8 @@ const objectConstraintsApply = function objectConstraintsApply(
 };
 
 const arrayConstraintsApply = function arrayConstraintsApply(
-  schema: Record<string, unknown>,
-  value: unknown,
+  schema: ToolSchemaObject,
+  value: ToolJsonValue,
   types: string[]
 ): boolean {
   if (
@@ -4535,19 +4833,23 @@ const arrayConstraintsApply = function arrayConstraintsApply(
 };
 
 const schemaCompositionMatches = function schemaCompositionMatches(
-  value: unknown,
-  record: Record<string, unknown>,
-  check: (value: unknown, schema: unknown, required: boolean) => boolean
+  value: ToolJsonValue,
+  record: ToolSchemaObject,
+  check: (
+    value: ToolJsonValue,
+    schema: ToolJsonValue | undefined,
+    required: boolean
+  ) => boolean
 ): boolean {
-  const anyOf = composedToolSchemas(record.anyOf);
+  const anyOf = composedToolSchemas(record.anyOf).filter(isToolJsonValue);
   if (anyOf.length && !anyOf.some((item) => check(value, item, true))) {
     return false;
   }
-  const oneOf = composedToolSchemas(record.oneOf);
+  const oneOf = composedToolSchemas(record.oneOf).filter(isToolJsonValue);
   if (oneOf.length && !oneOf.some((item) => check(value, item, true))) {
     return false;
   }
-  const allOf = composedToolSchemas(record.allOf);
+  const allOf = composedToolSchemas(record.allOf).filter(isToolJsonValue);
   if (allOf.length && !allOf.every((item) => check(value, item, true))) {
     return false;
   }
@@ -4555,30 +4857,26 @@ const schemaCompositionMatches = function schemaCompositionMatches(
 };
 
 const argumentValueSatisfiesSchema = function argumentValueSatisfiesSchema(
-  value: unknown,
-  schema: unknown,
+  value: ToolJsonValue | undefined,
+  schema: ToolJsonValue | undefined,
   required: boolean
 ): boolean {
   const objectValueSatisfiesSchema = function objectValueSatisfiesSchema(
-    objectValue: unknown,
-    objectSchema: Record<string, unknown>
+    objectValue: ToolJsonValue,
+    objectSchema: ToolSchemaObject
   ): boolean {
-    if (!jsonValueMatchesType(objectValue, "object")) {
+    if (!isToolJsonObject(objectValue)) {
       return false;
     }
-    const recordValue = objectValue as Record<string, unknown>;
-    const properties = isRecord(objectSchema.properties)
+    const recordValue = objectValue;
+    const properties = isToolJsonObject(objectSchema.properties)
       ? objectSchema.properties
       : {};
     const propertyNames = Object.keys(properties);
     const normalizedProperties = new Map(
       propertyNames.map((property) => [normalizeToolName(property), property])
     );
-    const requiredProperties = Array.isArray(objectSchema.required)
-      ? objectSchema.required.filter(
-          (item): item is string => typeof item === "string"
-        )
-      : [];
+    const requiredProperties = objectSchema.required ?? [];
     for (const requiredProperty of requiredProperties) {
       const property =
         firstMatchingProperty(
@@ -4618,7 +4916,7 @@ const argumentValueSatisfiesSchema = function argumentValueSatisfiesSchema(
         return false;
       }
       if (
-        isRecord(objectSchema.additionalProperties) &&
+        isToolJsonObject(objectSchema.additionalProperties) &&
         !argumentValueSatisfiesSchema(
           nestedValue,
           objectSchema.additionalProperties,
@@ -4632,50 +4930,33 @@ const argumentValueSatisfiesSchema = function argumentValueSatisfiesSchema(
   };
 
   const arrayValueSatisfiesSchema = function arrayValueSatisfiesSchema(
-    arrayValue: unknown,
-    arraySchema: Record<string, unknown>
+    arrayValue: ToolJsonValue[],
+    arraySchema: ToolSchemaObject
   ): boolean {
-    if (!Array.isArray(arrayValue)) {
-      return false;
-    }
-    const minItems =
-      typeof arraySchema.minItems === "number" &&
-      Number.isFinite(arraySchema.minItems)
-        ? arraySchema.minItems
-        : undefined;
-    const maxItems =
-      typeof arraySchema.maxItems === "number" &&
-      Number.isFinite(arraySchema.maxItems)
-        ? arraySchema.maxItems
-        : undefined;
+    const minItems = Number.isFinite(arraySchema.minItems)
+      ? arraySchema.minItems
+      : undefined;
+    const maxItems = Number.isFinite(arraySchema.maxItems)
+      ? arraySchema.maxItems
+      : undefined;
     if (minItems !== undefined && arrayValue.length < minItems) {
       return false;
     }
     if (maxItems !== undefined && arrayValue.length > maxItems) {
       return false;
     }
-    const prefixItems = Array.isArray(arraySchema.prefixItems)
-      ? arraySchema.prefixItems
-      : [];
-    for (
-      let index = 0;
-      index < prefixItems.length && index < arrayValue.length;
-      index += 1
-    ) {
-      if (
-        !argumentValueSatisfiesSchema(
-          arrayValue[index],
-          prefixItems[index],
-          true
-        )
-      ) {
+    const prefixItems = arraySchema.prefixItems ?? [];
+    for (const [index, prefixItem] of prefixItems
+      .slice(0, arrayValue.length)
+      .entries()) {
+      if (!argumentValueSatisfiesSchema(arrayValue[index], prefixItem, true)) {
         return false;
       }
     }
     if (arraySchema.items === false && arrayValue.length > prefixItems.length) {
       return false;
     }
-    if (isRecord(arraySchema.items)) {
+    if (isToolJsonObject(arraySchema.items)) {
       for (
         let index = prefixItems.length;
         index < arrayValue.length;
@@ -4698,7 +4979,8 @@ const argumentValueSatisfiesSchema = function argumentValueSatisfiesSchema(
   if (value === undefined) {
     return !required;
   }
-  const record = isRecord(schema) ? schema : undefined;
+  const record =
+    schema !== undefined && isToolJsonObject(schema) ? schema : undefined;
   if (value === null) {
     return Boolean(record && schemaAllowsJsonType(record, "null"));
   }
@@ -4733,7 +5015,7 @@ const argumentValueSatisfiesSchema = function argumentValueSatisfiesSchema(
   }
   if (
     arrayConstraintsApply(record, value, types) &&
-    !arrayValueSatisfiesSchema(value, record)
+    (!Array.isArray(value) || !arrayValueSatisfiesSchema(value, record))
   ) {
     return false;
   }
@@ -4741,7 +5023,7 @@ const argumentValueSatisfiesSchema = function argumentValueSatisfiesSchema(
 };
 
 const toolArgumentsSatisfySchema = function toolArgumentsSatisfySchema(
-  args: Record<string, unknown>,
+  args: ToolArgumentRecord,
   tool: OpenAiToolSpec
 ): boolean {
   const schema = toolParameterSchema(tool);
@@ -4759,9 +5041,12 @@ const toolArgumentsSatisfySchema = function toolArgumentsSatisfySchema(
         normalizedProperties
       ) ?? required;
     if (
+      !isToolJsonValue(args[property]) ||
       !argumentValueSatisfiesSchema(
         args[property],
-        schema.propertySchemas[property],
+        isToolJsonValue(schema.propertySchemas[property])
+          ? schema.propertySchemas[property]
+          : undefined,
         true
       )
     ) {
@@ -4778,9 +5063,12 @@ const toolArgumentsSatisfySchema = function toolArgumentsSatisfySchema(
       continue;
     }
     if (
+      !isToolJsonValue(value) ||
       !argumentValueSatisfiesSchema(
         value,
-        schema.propertySchemas[propertyName],
+        isToolJsonValue(schema.propertySchemas[propertyName])
+          ? schema.propertySchemas[propertyName]
+          : undefined,
         false
       )
     ) {
@@ -4793,28 +5081,39 @@ const toolArgumentsSatisfySchema = function toolArgumentsSatisfySchema(
 const sdkRoutingRecords = function sdkRoutingRecords(
   tools: OpenAiToolSpec[],
   context?: ToolCallContext
-): Record<string, unknown>[] {
-  const routes: Record<string, unknown>[] = [];
+): {
+  client: string;
+  clientArgs?: ToolArgumentRecord;
+  sdk: string;
+  sdkArgs?: ToolArgumentRecord;
+}[] {
+  const routes: {
+    client: string;
+    clientArgs?: ToolArgumentRecord;
+    sdk: string;
+    sdkArgs?: ToolArgumentRecord;
+  }[] = [];
   for (const sample of sdkRoutingSamples()) {
-    const tool = resolveToolSpec(sample.name, sample.arguments, tools);
-    if (!tool) {
-      continue;
-    }
-    const clientArgs = normalizeToolArguments(
-      sample.arguments,
-      tool,
-      sample.name,
-      0,
-      context
+    const sampleArguments = parseToolCallArguments(
+      JSON.stringify(sample.arguments) ?? "{}"
     );
-    if (!toolArgumentsSatisfySchema(clientArgs, tool)) {
-      continue;
+    const tool = resolveToolSpec(sample.name, sampleArguments, tools);
+    if (tool) {
+      const clientArgs = normalizeToolArguments(
+        sampleArguments,
+        tool,
+        sample.name,
+        0,
+        context
+      );
+      if (toolArgumentsSatisfySchema(clientArgs, tool)) {
+        routes.push({
+          client: tool.name,
+          clientArgs,
+          sdk: sample.name,
+        });
+      }
     }
-    routes.push({
-      client: tool.name,
-      clientArgs,
-      sdk: sample.name,
-    });
   }
   for (const tool of tools) {
     const target = mcpTargetForClientToolName(tool.name, {
@@ -4928,39 +5227,42 @@ const canonicalFromOperation = function canonicalFromOperation(
 };
 
 const canonicalFromToolSchema = function canonicalFromToolSchema(
-  args: Record<string, unknown>,
+  args: ToolArgumentRecord,
   tool: OpenAiToolSpec
 ): string | undefined {
+  const parsedArgs = parseToolArgumentRecord(args);
   if (
     schemaLooksCompatible("shell", tool) &&
-    firstStringArg(args, ...shellCommandCandidates())
+    firstStringArg(parsedArgs, ...shellCommandCandidates())
   ) {
     return "shell";
   }
   if (
     schemaLooksCompatible("edit", tool) &&
-    firstStringArgAllowEmpty(args, ...oldTextCandidates()) !== undefined &&
-    firstStringArgAllowEmpty(args, ...newTextCandidates()) !== undefined
+    firstStringArgAllowEmpty(parsedArgs, ...oldTextCandidates()) !==
+      undefined &&
+    firstStringArgAllowEmpty(parsedArgs, ...newTextCandidates()) !== undefined
   ) {
     return "edit";
   }
   if (
     schemaLooksCompatible("write", tool) &&
-    firstStringArg(args, ...pathCandidates()) &&
-    firstStringArgAllowEmpty(args, ...fileContentCandidates()) !== undefined
+    firstStringArg(parsedArgs, ...pathCandidates()) &&
+    firstStringArgAllowEmpty(parsedArgs, ...fileContentCandidates()) !==
+      undefined
   ) {
     return "write";
   }
   if (
     schemaLooksCompatible("glob", tool) &&
-    firstStringArg(args, ...globPatternCandidates())
+    firstStringArg(parsedArgs, ...globPatternCandidates())
   ) {
     return "glob";
   }
   if (
     schemaLooksCompatible("grep", tool) &&
     firstStringArg(
-      args,
+      parsedArgs,
       "pattern",
       "query",
       "search",
@@ -4973,7 +5275,7 @@ const canonicalFromToolSchema = function canonicalFromToolSchema(
   }
   if (
     schemaLooksCompatible("ls", tool) &&
-    firstStringArg(args, ...pathCandidates(), "directory", "dir")
+    firstStringArg(parsedArgs, ...pathCandidates(), "directory", "dir")
   ) {
     return "ls";
   }
@@ -4982,7 +5284,7 @@ const canonicalFromToolSchema = function canonicalFromToolSchema(
 
 const inferSdkCanonicalFromClientTool =
   function inferSdkCanonicalFromClientTool(
-    args: Record<string, unknown>,
+    args: ToolArgumentRecord,
     tool?: OpenAiToolSpec
   ): string | undefined {
     const operation = firstStringArg(args, ...operationPropertyCandidates());
@@ -5000,7 +5302,7 @@ const inferSdkCanonicalFromClientTool =
 
 const sdkToolNameForOpenCodeTool = function sdkToolNameForOpenCodeTool(
   name: string,
-  args: Record<string, unknown> = {},
+  args: ToolArgumentRecord = {},
   tool?: OpenAiToolSpec
 ): string {
   const directCanonical = canonicalToolName(name);
@@ -5021,7 +5323,7 @@ const sdkToolNameForOpenCodeTool = function sdkToolNameForOpenCodeTool(
 };
 
 const firstNumberNamedArg = function firstNumberNamedArg(
-  args: Record<string, unknown>,
+  args: ToolArgumentRecord,
   ...keys: string[]
 ):
   | {
@@ -5031,26 +5333,20 @@ const firstNumberNamedArg = function firstNumberNamedArg(
   | undefined {
   for (const key of keys) {
     const value = args[key];
-    if (typeof value === "number" && Number.isFinite(value)) {
-      return { key, value };
+    if (Number.isFinite(value)) {
+      return { key, value: Number(value) };
     }
   }
   const normalizedKeys = new Set(keys.map(normalizeToolName));
   for (const [key, value] of Object.entries(args)) {
-    if (
-      normalizedKeys.has(normalizeToolName(key)) &&
-      typeof value === "number" &&
-      Number.isFinite(value)
-    ) {
-      return { key, value };
+    if (normalizedKeys.has(normalizeToolName(key)) && Number.isFinite(value)) {
+      return { key, value: Number(value) };
     }
   }
   return undefined;
 };
 
-const compactRecord = function compactRecord(
-  input: Record<string, unknown>
-): Record<string, unknown> {
+const compactRecord = function compactRecord(input: ToolArgumentRecord) {
   return Object.fromEntries(
     Object.entries(input).filter(([, value]) => value !== undefined)
   );
@@ -5092,47 +5388,48 @@ const sdkTimeoutArgument = function sdkTimeoutArgument(
 
 const openCodeArgsToSdkArgs = function openCodeArgsToSdkArgs(
   toolName: string,
-  args: Record<string, unknown>,
+  args: ToolArgumentRecord,
   tool?: OpenAiToolSpec,
   sdkName?: string
-): Record<string, unknown> {
+) {
+  const parsedArgs = parseToolArgumentRecord(args);
   const canonical =
     sdkName && KNOWN_SDK_CANONICAL_TOOLS.has(sdkName)
       ? sdkName
-      : sdkToolNameForOpenCodeTool(toolName, args, tool);
+      : sdkToolNameForOpenCodeTool(toolName, parsedArgs, tool);
   const mcpTarget =
     canonical === "mcp"
       ? mcpTargetForClientToolName(toolName, { includeMapped: true })
       : undefined;
   if (mcpTarget) {
     return {
-      args,
+      args: parsedArgs,
       providerIdentifier: mcpTarget.provider,
       toolName: mcpTarget.toolName,
     };
   }
   if (canonical === "shell") {
-    const timeout = firstNumberNamedArg(args, ...timeoutCandidates());
+    const timeout = firstNumberNamedArg(parsedArgs, ...timeoutCandidates());
     return compactRecord({
-      command: firstStringArg(args, ...shellCommandCandidates()),
+      command: firstStringArg(parsedArgs, ...shellCommandCandidates()),
       timeout: sdkTimeoutArgument(timeout, tool),
-      workingDirectory: firstStringArg(args, ...shellWorkdirCandidates()),
+      workingDirectory: firstStringArg(parsedArgs, ...shellWorkdirCandidates()),
     });
   }
   if (canonical === "write") {
     return compactRecord({
       fileText: firstStringArg(
-        args,
+        parsedArgs,
         ...fileContentCandidates(),
         ...newTextCandidates()
       ),
-      path: firstStringArg(args, ...pathCandidates()),
+      path: firstStringArg(parsedArgs, ...pathCandidates()),
     });
   }
   if (canonical === "read") {
     return compactRecord({
       limit: firstNumberArg(
-        args,
+        parsedArgs,
         "limit",
         "maxLines",
         "max_lines",
@@ -5140,52 +5437,52 @@ const openCodeArgsToSdkArgs = function openCodeArgsToSdkArgs(
         "line_count"
       ),
       offset: firstNumberArg(
-        args,
+        parsedArgs,
         "offset",
         "start",
         "startLine",
         "start_line"
       ),
-      path: firstStringArg(args, ...pathCandidates(), "directory", "dir"),
+      path: firstStringArg(parsedArgs, ...pathCandidates(), "directory", "dir"),
     });
   }
   if (canonical === "delete") {
     return compactRecord({
-      path: firstStringArg(args, ...pathCandidates(), "directory", "dir"),
+      path: firstStringArg(parsedArgs, ...pathCandidates(), "directory", "dir"),
     });
   }
   if (canonical === "ls") {
     return compactRecord({
-      limit: firstNumberArg(args, "limit", "maxResults", "max_results"),
-      path: firstStringArg(args, ...pathCandidates(), "directory", "dir"),
+      limit: firstNumberArg(parsedArgs, "limit", "maxResults", "max_results"),
+      path: firstStringArg(parsedArgs, ...pathCandidates(), "directory", "dir"),
     });
   }
   if (canonical === "edit") {
     return compactRecord({
-      newString: firstStringArgAllowEmpty(args, ...newTextCandidates()),
-      oldString: firstStringArgAllowEmpty(args, ...oldTextCandidates()),
-      path: firstStringArg(args, ...pathCandidates(), "directory", "dir"),
+      newString: firstStringArgAllowEmpty(parsedArgs, ...newTextCandidates()),
+      oldString: firstStringArgAllowEmpty(parsedArgs, ...oldTextCandidates()),
+      path: firstStringArg(parsedArgs, ...pathCandidates(), "directory", "dir"),
     });
   }
   if (canonical === "glob") {
     return compactRecord({
-      globPattern: firstStringArg(args, ...globPatternCandidates()),
-      targetDirectory: firstStringArg(args, ...globPathCandidates()),
+      globPattern: firstStringArg(parsedArgs, ...globPatternCandidates()),
+      targetDirectory: firstStringArg(parsedArgs, ...globPathCandidates()),
     });
   }
   if (canonical === "grep") {
     return compactRecord({
       caseInsensitive: firstBooleanArg(
-        args,
+        parsedArgs,
         "caseInsensitive",
         "case_insensitive",
         "ignoreCase",
         "ignore_case"
       ),
       context: firstNumberArg(args, "context", "contextLines", "context_lines"),
-      glob: firstStringArg(args, "glob", "include"),
+      glob: firstStringArg(parsedArgs, "glob", "include"),
       headLimit: firstNumberArg(
-        args,
+        parsedArgs,
         "headLimit",
         "head_limit",
         "limit",
@@ -5193,48 +5490,55 @@ const openCodeArgsToSdkArgs = function openCodeArgsToSdkArgs(
         "max_results"
       ),
       literal: firstBooleanArg(args, "literal", "fixedString", "fixed_string"),
-      path: firstStringArg(args, "path", "directory", "cwd"),
-      pattern: firstStringArg(args, "pattern", "query", "search", "regex"),
+      path: firstStringArg(parsedArgs, "path", "directory", "cwd"),
+      pattern: firstStringArg(
+        parsedArgs,
+        "pattern",
+        "query",
+        "search",
+        "regex"
+      ),
     });
   }
-  return args;
+  return parsedArgs;
 };
 
 const parseToolResultPayload = function parseToolResultPayload(
   text: string
-): unknown {
+): ToolJsonValue | undefined {
   const trimmed = text.trim();
   if (!trimmed || (!trimmed.startsWith("{") && !trimmed.startsWith("["))) {
     return undefined;
   }
   try {
-    return JSON.parse(trimmed) as unknown;
+    const parsed: unknown = JSON.parse(trimmed);
+    return isToolJsonValue(parsed) ? parsed : undefined;
   } catch {
     return undefined;
   }
 };
 
 const numberFromParsed = function numberFromParsed(
-  value: unknown,
+  value: ToolJsonValue | undefined,
   keys: string[]
 ): number | undefined {
-  if (!isRecord(value)) {
+  if (!value || !isToolJsonObject(value)) {
     return undefined;
   }
   for (const key of keys) {
     const candidate = value[key];
-    if (typeof candidate === "number" && Number.isFinite(candidate)) {
-      return candidate;
+    if (Number.isFinite(candidate)) {
+      return Number(candidate);
     }
   }
   return undefined;
 };
 
 const isErrorToolResult = function isErrorToolResult(
-  parsed: unknown,
+  parsed: ToolJsonValue | undefined,
   text: string
 ): boolean {
-  if (isRecord(parsed)) {
+  if (parsed && isToolJsonObject(parsed)) {
     if (parsed.isError === true || parsed.error !== undefined) {
       return true;
     }
@@ -5251,29 +5555,34 @@ const isErrorToolResult = function isErrorToolResult(
 };
 
 const errorMessageFromToolResult = function errorMessageFromToolResult(
-  parsed: unknown,
+  parsed: ToolJsonValue | undefined,
   text: string
 ): string {
-  if (isRecord(parsed)) {
+  if (parsed && isToolJsonObject(parsed)) {
     const { error } = parsed;
-    if (typeof error === "string") {
-      return error;
+    const errorText = toolJsonString(error);
+    if (errorText !== undefined) {
+      return errorText;
     }
-    if (isRecord(error) && typeof error.message === "string") {
-      return error.message;
+    if (error && isToolJsonObject(error)) {
+      const message = toolJsonString(error.message);
+      if (message !== undefined) {
+        return message;
+      }
     }
-    if (typeof parsed.message === "string") {
-      return parsed.message;
+    const message = toolJsonString(parsed.message);
+    if (message !== undefined) {
+      return message;
     }
   }
   return text || "Tool failed";
 };
 
 const sdkToolResult = function sdkToolResult(
-  parsed: unknown,
+  parsed: ToolJsonValue | undefined,
   resultText: string,
-  value: Record<string, unknown>
-): Record<string, unknown> {
+  value: ToolJsonObject
+) {
   if (isErrorToolResult(parsed, resultText)) {
     return {
       error: { message: errorMessageFromToolResult(parsed, resultText) },
@@ -5284,19 +5593,21 @@ const sdkToolResult = function sdkToolResult(
 };
 
 const stringFromParsed = function stringFromParsed(
-  value: unknown,
+  value: ToolJsonValue | undefined,
   keys: string[]
 ): string | undefined {
-  if (typeof value === "string") {
-    return value;
+  const direct = toolJsonString(value);
+  if (direct !== undefined) {
+    return direct;
   }
-  if (!isRecord(value)) {
+  if (!value || !isToolJsonObject(value)) {
     return undefined;
   }
   for (const key of keys) {
     const candidate = value[key];
-    if (typeof candidate === "string") {
-      return candidate;
+    const parsed = toolJsonString(candidate);
+    if (parsed !== undefined) {
+      return parsed;
     }
   }
   return undefined;
@@ -5309,112 +5620,140 @@ const lineCount = function lineCount(text: string): number {
   return text.split(/\r?\n/u).length;
 };
 
+const openCodeShellResult = function openCodeShellResult(
+  parsed: ToolJsonValue | undefined,
+  resultText: string
+): ToolJsonObject {
+  return sdkToolResult(parsed, resultText, {
+    executionTime:
+      numberFromParsed(parsed, [
+        "executionTime",
+        "durationMs",
+        "duration_ms",
+      ]) ?? 0,
+    exitCode: numberFromParsed(parsed, ["exitCode", "exit_code", "code"]) ?? 0,
+    signal: stringFromParsed(parsed, ["signal"]) ?? "",
+    stderr: stringFromParsed(parsed, ["stderr", "error"]) ?? "",
+    stdout:
+      stringFromParsed(parsed, ["stdout", "output", "text"]) ?? resultText,
+  });
+};
+
+const openCodeReadResult = function openCodeReadResult(
+  parsed: ToolJsonValue | undefined,
+  resultText: string
+): ToolJsonObject {
+  const content =
+    stringFromParsed(parsed, ["content", "text", "output"]) ?? resultText;
+  return sdkToolResult(parsed, resultText, {
+    content,
+    fileSize: content.length,
+    totalLines: lineCount(content),
+  });
+};
+
+const openCodeWriteResult = function openCodeWriteResult(
+  parsed: ToolJsonValue | undefined,
+  resultText: string,
+  args: ToolArgumentRecord
+): ToolJsonObject {
+  const fileText =
+    firstStringArg(args, ...fileContentCandidates(), ...newTextCandidates()) ||
+    "";
+  return sdkToolResult(parsed, resultText, {
+    fileSize: fileText.length,
+    linesCreated: lineCount(fileText),
+    path: firstStringArg(args, ...pathCandidates()) || "",
+  });
+};
+
+const openCodeEditResult = function openCodeEditResult(
+  parsed: ToolJsonValue | undefined,
+  resultText: string
+): ToolJsonObject {
+  return sdkToolResult(parsed, resultText, {
+    diffString:
+      stringFromParsed(parsed, ["diff", "diffString", "output"]) ?? resultText,
+  });
+};
+
 const stringsFromParsed = function stringsFromParsed(
-  value: unknown,
+  value: ToolJsonValue | undefined,
   keys: string[]
 ): string[] | undefined {
-  if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
-    return value;
+  if (Array.isArray(value) && value.every((item) => String(item) === item)) {
+    return value.map(String);
   }
-  if (!isRecord(value)) {
+  if (!value || !isToolJsonObject(value)) {
     return undefined;
   }
   for (const key of keys) {
     const candidate = value[key];
     if (
       Array.isArray(candidate) &&
-      candidate.every((item) => typeof item === "string")
+      candidate.every((item) => String(item) === item)
     ) {
-      return candidate;
+      return candidate.map(String);
     }
   }
   return undefined;
 };
 
-const resultTextLines = function resultTextLines(text: string): string[] {
-  return text
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter(Boolean);
+const openCodeGlobResult = function openCodeGlobResult(
+  parsed: ToolJsonValue | undefined,
+  resultText: string
+): ToolJsonObject {
+  const files = stringsFromParsed(parsed, ["files", "paths"]);
+  const resolvedFiles =
+    files ??
+    resultText
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter(Boolean);
+  return sdkToolResult(parsed, resultText, {
+    clientTruncated: false,
+    files: resolvedFiles,
+    ripgrepTruncated: false,
+    totalFiles: resolvedFiles.length,
+  });
 };
 
 const openCodeToolResultToSdkResult = function openCodeToolResultToSdkResult(
   toolName: string,
-  args: Record<string, unknown>,
+  args: ToolArgumentRecord,
   resultText: string,
   sdkName?: string
-): Record<string, unknown> {
+): ToolJsonObject {
   const parsed = parseToolResultPayload(resultText);
   const canonical =
     sdkName && KNOWN_SDK_CANONICAL_TOOLS.has(sdkName)
       ? sdkName
       : sdkToolNameForOpenCodeTool(toolName, args);
+  const resultBuilders = new Map<
+    string,
+    (
+      value: ToolJsonValue | undefined,
+      text: string,
+      args: ToolArgumentRecord
+    ) => ToolJsonObject
+  >([
+    ["edit", openCodeEditResult],
+    ["glob", openCodeGlobResult],
+    ["read", openCodeReadResult],
+    ["shell", openCodeShellResult],
+    ["write", openCodeWriteResult],
+  ]);
+  const builder = resultBuilders.get(canonical);
   if (canonical === "mcp") {
     return sdkToolResult(
       parsed,
       resultText,
-      isRecord(parsed) ? parsed : { text: resultText }
+      parsed && isToolJsonObject(parsed) ? parsed : { text: resultText }
     );
   }
-  if (canonical === "shell") {
-    return sdkToolResult(parsed, resultText, {
-      executionTime:
-        numberFromParsed(parsed, [
-          "executionTime",
-          "durationMs",
-          "duration_ms",
-        ]) ?? 0,
-      exitCode:
-        numberFromParsed(parsed, ["exitCode", "exit_code", "code"]) ?? 0,
-      signal: stringFromParsed(parsed, ["signal"]) ?? "",
-      stderr: stringFromParsed(parsed, ["stderr", "error"]) ?? "",
-      stdout:
-        stringFromParsed(parsed, ["stdout", "output", "text"]) ?? resultText,
-    });
-  }
-  if (canonical === "read") {
-    const content =
-      stringFromParsed(parsed, ["content", "text", "output"]) ?? resultText;
-    return sdkToolResult(parsed, resultText, {
-      content,
-      fileSize: content.length,
-      totalLines: lineCount(content),
-    });
-  }
-  if (canonical === "write") {
-    const fileText =
-      firstStringArg(
-        args,
-        ...fileContentCandidates(),
-        ...newTextCandidates()
-      ) || "";
-    return sdkToolResult(parsed, resultText, {
-      fileSize: fileText.length,
-      linesCreated: lineCount(fileText),
-      path: firstStringArg(args, ...pathCandidates()) || "",
-    });
-  }
-  if (canonical === "edit") {
-    return sdkToolResult(parsed, resultText, {
-      diffString:
-        stringFromParsed(parsed, ["diff", "diffString", "output"]) ??
-        resultText,
-    });
-  }
-  if (canonical === "glob") {
-    const files =
-      stringsFromParsed(parsed, ["files", "paths"]) ??
-      resultTextLines(resultText);
-    return sdkToolResult(parsed, resultText, {
-      clientTruncated: false,
-      files,
-      ripgrepTruncated: false,
-      totalFiles: files.length,
-    });
-  }
-  return sdkToolResult(parsed, resultText, {
-    text: resultText,
-  });
+  return builder
+    ? builder(parsed, resultText, args)
+    : sdkToolResult(parsed, resultText, { text: resultText });
 };
 
 const sdkToolResultFeedback = function sdkToolResultFeedback(
@@ -5425,11 +5764,11 @@ const sdkToolResultFeedback = function sdkToolResultFeedback(
     string,
     {
       name: string;
-      args: Record<string, unknown>;
+      args: ToolArgumentRecord;
     }
   >,
   tools: OpenAiToolSpec[] = []
-): Record<string, unknown> {
+) {
   const original = toolCallById.get(toolCallId);
   const sdkMemory = sdkToolCallMemory.get(toolCallId);
   const name = original?.name || fallbackToolName || "unknown";
@@ -5456,9 +5795,109 @@ const sdkToolResultFeedback = function sdkToolResultFeedback(
   };
 };
 
+type ResponseInputValue =
+  | boolean
+  | null
+  | number
+  | ResponseInputValue[]
+  | ResponseInputRecord
+  | string
+  | undefined;
+
+interface ResponseInputRecord {
+  [key: string]: ResponseInputValue;
+}
+
+const isResponseInputString = function isResponseInputString<T>(
+  value: T
+): value is Extract<T, string> {
+  return value === String(value);
+};
+
+const isResponseInputObject = function isResponseInputObject<T>(
+  value: T
+): value is T & object {
+  return (
+    value !== null &&
+    Object.prototype.toString.call(value) === "[object Object]"
+  );
+};
+
+const isResponseInputValue = function isResponseInputValue<T>(
+  value: T
+): value is T & ResponseInputValue {
+  if (
+    value === undefined ||
+    value === null ||
+    value === true ||
+    value === false
+  ) {
+    return true;
+  }
+  if (isResponseInputString(value) || Number.isFinite(value)) {
+    return true;
+  }
+  if (Array.isArray(value)) {
+    return value.every(isResponseInputValue);
+  }
+  return (
+    isResponseInputObject(value) &&
+    Object.values(value).every(isResponseInputValue)
+  );
+};
+
+const parseResponseInputValue = function parseResponseInputValue<T>(
+  value: T,
+  name = "input"
+): ResponseInputValue {
+  if (isResponseInputValue(value)) {
+    return value;
+  }
+  throw new HttpError(
+    `${name} must contain only JSON values`,
+    400,
+    "invalid_request_error",
+    name
+  );
+};
+
+const isResponseInputRecord = function isResponseInputRecord(
+  value: ResponseInputValue
+): value is ResponseInputRecord {
+  return !Array.isArray(value) && isResponseInputObject(value);
+};
+
+const parseResponseInputRecord = function parseResponseInputRecord<T>(
+  value: T,
+  name: string
+): ResponseInputRecord {
+  const parsed = parseResponseInputValue(value, name);
+  if (isResponseInputRecord(parsed)) {
+    return parsed;
+  }
+  throw new HttpError(
+    `${name} must be an object`,
+    400,
+    "invalid_request_error",
+    name
+  );
+};
+
+const parseOptionalResponseString = function parseOptionalResponseString(
+  value: ResponseInputValue | undefined
+): string | undefined {
+  return isResponseInputString(value) ? value : undefined;
+};
+
+const responseInputRecord = function responseInputRecord(
+  value: ResponseInputValue
+): ResponseInputRecord | undefined {
+  return isResponseInputRecord(value) ? value : undefined;
+};
+
 const responseInputArray = function responseInputArray(
-  input: unknown
-): unknown[] {
+  input: ResponseInputValue | undefined
+): ResponseInputValue[] {
   if (input === undefined || input === null) {
     return [];
   }
@@ -5467,20 +5906,28 @@ const responseInputArray = function responseInputArray(
 
 const toolCallContextFromResponseInput =
   function toolCallContextFromResponseInput(
-    input: unknown,
-    instructions: unknown
+    input: ResponseInputValue | undefined,
+    instructions: ResponseInputValue | undefined
   ): ToolCallContext | undefined {
     const texts: string[] = [];
-    if (typeof instructions === "string") {
-      texts.push(instructions);
+    const instructionText = parseOptionalResponseString(instructions);
+    if (instructionText !== undefined) {
+      texts.push(instructionText);
     }
     for (const item of responseInputArray(input)) {
-      if (typeof item === "string") {
-        texts.push(item);
-      } else if (isRecord(item)) {
-        texts.push(contentToPlainText(item.content));
-        if (typeof item.instructions === "string") {
-          texts.push(item.instructions);
+      const text = parseOptionalResponseString(item);
+      if (text !== undefined) {
+        texts.push(text);
+        continue;
+      }
+      const record = responseInputRecord(item);
+      if (record) {
+        texts.push(contentToPlainText(record.content));
+        const itemInstructions = parseOptionalResponseString(
+          record.instructions
+        );
+        if (itemInstructions !== undefined) {
+          texts.push(itemInstructions);
         }
       }
     }
@@ -5489,33 +5936,68 @@ const toolCallContextFromResponseInput =
   };
 
 const latestUserTextFromResponseInput =
-  function latestUserTextFromResponseInput(input: unknown): string {
-    if (typeof input === "string") {
-      return input;
+  function latestUserTextFromResponseInput(
+    input: ResponseInputValue | undefined
+  ): string {
+    const directText = parseOptionalResponseString(input);
+    if (directText !== undefined) {
+      return directText;
     }
     if (!Array.isArray(input)) {
       return "";
     }
     for (const item of [...input].toReversed()) {
-      if (typeof item === "string") {
-        return item;
+      const itemText = parseOptionalResponseString(item);
+      if (itemText !== undefined) {
+        return itemText;
       }
-      if (!isRecord(item)) {
-        continue;
-      }
-      if (item.type === "message" || typeof item.role === "string") {
-        const role = typeof item.role === "string" ? item.role : "user";
+      const record = responseInputRecord(item);
+      const roleText = record
+        ? parseOptionalResponseString(record.role)
+        : undefined;
+      if (record && (record.type === "message" || roleText !== undefined)) {
+        const role = roleText ?? "user";
         if (role === "user") {
-          return contentToPlainText(item.content);
+          return contentToPlainText(record.content);
         }
       }
     }
     return "";
   };
 
+const responseInputUserMessage = function responseInputUserMessage(
+  item: ResponseInputValue
+): string | undefined {
+  const directText = parseOptionalResponseString(item);
+  if (directText !== undefined) {
+    return directText;
+  }
+  const record = responseInputRecord(item);
+  if (!record) {
+    return undefined;
+  }
+  const role = parseOptionalResponseString(record.role);
+  if (record.type !== "message" && role === undefined) {
+    return undefined;
+  }
+  return (role ?? "user") === "user"
+    ? contentToPlainText(record.content)
+    : undefined;
+};
+
+const responseInputFunctionCall = function responseInputFunctionCall(
+  item: ResponseInputValue
+): { name: string; arguments: ResponseInputValue | undefined } | undefined {
+  const record = responseInputRecord(item);
+  const name = record ? parseOptionalResponseString(record.name) : undefined;
+  return record?.type === "function_call" && name !== undefined
+    ? { arguments: record.arguments, name }
+    : undefined;
+};
+
 const hasSpecificResponseToolCallAfterLatestUser =
   function hasSpecificResponseToolCallAfterLatestUser(
-    input: unknown,
+    input: ResponseInputValue | undefined,
     requestedTool: string,
     tools: OpenAiToolSpec[] = []
   ): boolean {
@@ -5525,35 +6007,19 @@ const hasSpecificResponseToolCallAfterLatestUser =
     let sawLatestUser = false;
     let foundAfterLatestUser = false;
     for (const item of input) {
-      if (typeof item === "string") {
-        if (item.trim()) {
-          sawLatestUser = true;
-          foundAfterLatestUser = false;
-        }
+      const userMessage = responseInputUserMessage(item);
+      if (userMessage?.trim()) {
+        sawLatestUser = true;
+        foundAfterLatestUser = false;
         continue;
       }
-      if (!isRecord(item)) {
-        continue;
-      }
-      if (item.type === "message" || typeof item.role === "string") {
-        const role = typeof item.role === "string" ? item.role : "user";
-        if (role === "user" && contentToPlainText(item.content).trim()) {
-          sawLatestUser = true;
-          foundAfterLatestUser = false;
-        }
-        continue;
-      }
+      const call = responseInputFunctionCall(item);
       if (
-        !sawLatestUser ||
-        item.type !== "function_call" ||
-        typeof item.name !== "string"
-      ) {
-        continue;
-      }
-      if (
+        sawLatestUser &&
+        call &&
         toolCallMatchesClientTool(
-          item.name,
-          parseToolCallArguments(item.arguments),
+          call.name,
+          parseToolCallArguments(call.arguments),
           requestedTool,
           tools
         )
@@ -5566,7 +6032,7 @@ const hasSpecificResponseToolCallAfterLatestUser =
 
 const hasResponseWorkspaceMutationToolCall =
   function hasResponseWorkspaceMutationToolCall(
-    input: unknown,
+    input: ResponseInputValue | undefined,
     tools: OpenAiToolSpec[] = []
   ): boolean {
     if (!Array.isArray(input)) {
@@ -5575,30 +6041,18 @@ const hasResponseWorkspaceMutationToolCall =
     let sawLatestUser = false;
     let mutationAfterLatestUser = false;
     for (const item of input) {
-      if (typeof item === "string" && item.trim()) {
+      const userMessage = responseInputUserMessage(item);
+      if (userMessage?.trim()) {
         sawLatestUser = true;
         mutationAfterLatestUser = false;
         continue;
       }
-      if (!isRecord(item)) {
-        continue;
-      }
-      if (item.type === "message" || typeof item.role === "string") {
-        const role = typeof item.role === "string" ? item.role : "user";
-        if (role === "user" && contentToPlainText(item.content).trim()) {
-          sawLatestUser = true;
-          mutationAfterLatestUser = false;
-        }
-        continue;
-      }
+      const call = responseInputFunctionCall(item);
       if (
-        !sawLatestUser ||
-        item.type !== "function_call" ||
-        typeof item.name !== "string"
+        sawLatestUser &&
+        call &&
+        isWorkspaceMutationToolCall(call.name, call.arguments, tools)
       ) {
-        continue;
-      }
-      if (isWorkspaceMutationToolCall(item.name, item.arguments, tools)) {
         mutationAfterLatestUser = true;
       }
     }
@@ -5607,7 +6061,7 @@ const hasResponseWorkspaceMutationToolCall =
 
 const hasRequiredResponseLocalToolCall =
   function hasRequiredResponseLocalToolCall(
-    input: unknown,
+    input: ResponseInputValue | undefined,
     tools: OpenAiToolSpec[],
     latestUserText: string
   ): boolean {
@@ -5623,20 +6077,22 @@ const hasRequiredResponseLocalToolCall =
   };
 
 const toolChoiceFunctionName = function toolChoiceFunctionName(
-  toolChoice: unknown
+  toolChoice: ResponseInputValue | undefined
 ): string | undefined {
-  if (!isRecord(toolChoice) || toolChoice.type !== "function") {
+  const choiceRecord = toolChoice && responseInputRecord(toolChoice);
+  if (!choiceRecord || choiceRecord.type !== "function") {
     return undefined;
   }
-  if (typeof toolChoice.name === "string" && toolChoice.name.trim()) {
-    return toolChoice.name.trim();
+  const directName = parseOptionalResponseString(choiceRecord.name);
+  if (directName?.trim()) {
+    return directName.trim();
   }
-  if (
-    isRecord(toolChoice.function) &&
-    typeof toolChoice.function.name === "string" &&
-    toolChoice.function.name.trim()
-  ) {
-    return toolChoice.function.name.trim();
+  const functionRecord = responseInputRecord(choiceRecord.function);
+  const functionName = functionRecord
+    ? parseOptionalResponseString(functionRecord.name)
+    : undefined;
+  if (functionName?.trim()) {
+    return functionName.trim();
   }
   return undefined;
 };
@@ -5644,7 +6100,7 @@ const toolChoiceFunctionName = function toolChoiceFunctionName(
 const appendResponsesToolInventory = function appendResponsesToolInventory(
   transcript: string[],
   tools: OpenAiToolSpec[],
-  toolChoice: unknown,
+  toolChoice: ResponseInputValue | undefined,
   context?: ToolCallContext
 ) {
   if (!tools.length) {
@@ -5718,15 +6174,19 @@ const appendResponsesWorkspaceMutationRequirement =
   };
 
 const responseInputWithPrevious = function responseInputWithPrevious(
-  input: unknown,
+  input: ResponseInputValue | undefined,
   options: {
     previousOutput?: unknown[];
     previousInputItems?: unknown[];
   }
-): unknown {
+) {
   const previous = [
-    ...(options.previousInputItems ?? []),
-    ...(options.previousOutput ?? []),
+    ...(options.previousInputItems ?? []).map((item) =>
+      parseResponseInputValue(item, "previousInputItems")
+    ),
+    ...(options.previousOutput ?? []).map((item) =>
+      parseResponseInputValue(item, "previousOutput")
+    ),
   ];
   if (!previous.length) {
     return input;
@@ -5735,9 +6195,9 @@ const responseInputWithPrevious = function responseInputWithPrevious(
 };
 
 const responseToolOutputText = function responseToolOutputText(
-  output: unknown
+  output: ResponseInputValue | undefined
 ): string {
-  if (typeof output === "string") {
+  if (isResponseInputString(output)) {
     return output;
   }
   if (output === undefined || output === null) {
@@ -5747,33 +6207,36 @@ const responseToolOutputText = function responseToolOutputText(
 };
 
 const responseCallIdFromRecord = function responseCallIdFromRecord(
-  record: Record<string, unknown>,
+  record: ResponseInputRecord,
   fallbackIndex: number
 ): string {
-  if (typeof record.call_id === "string" && record.call_id.trim()) {
-    return record.call_id.trim();
+  const callId = parseOptionalResponseString(record.call_id);
+  if (callId?.trim()) {
+    return callId.trim();
   }
-  if (typeof record.id === "string" && record.id.trim()) {
-    return record.id.trim();
+  const id = parseOptionalResponseString(record.id);
+  if (id?.trim()) {
+    return id.trim();
   }
   return `call_response_${fallbackIndex}`;
 };
 
 const appendResponseInputRecord = function appendResponseInputRecord(
-  record: Record<string, unknown>,
+  record: ResponseInputRecord,
   lines: string[],
   images: CursorImage[],
   toolCallById: Map<
     string,
     {
       name: string;
-      args: Record<string, unknown>;
+      args: ToolArgumentRecord;
     }
   >,
   tools: OpenAiToolSpec[]
 ) {
-  if (record.type === "message" || typeof record.role === "string") {
-    const role = typeof record.role === "string" ? record.role : "user";
+  const roleText = parseOptionalResponseString(record.role);
+  if (record.type === "message" || roleText !== undefined) {
+    const role = roleText ?? "user";
     const content = contentToTextAndImages(record.content, role);
     lines.push(`${role.toUpperCase()}: ${content.text || "[empty]"}`);
     images.push(...content.images);
@@ -5781,7 +6244,7 @@ const appendResponseInputRecord = function appendResponseInputRecord(
   }
   if (record.type === "function_call") {
     const callId = responseCallIdFromRecord(record, toolCallById.size);
-    const name = typeof record.name === "string" ? record.name : "unknown";
+    const name = parseOptionalResponseString(record.name) ?? "unknown";
     const args = parseToolCallArguments(record.arguments);
     toolCallById.set(callId, { args, name });
     lines.push(
@@ -5790,7 +6253,7 @@ const appendResponseInputRecord = function appendResponseInputRecord(
     return;
   }
   if (record.type === "function_call_output") {
-    const callId = typeof record.call_id === "string" ? record.call_id : "";
+    const callId = parseOptionalResponseString(record.call_id) ?? "";
     const output = responseToolOutputText(record.output);
     const remembered = toolCallById.get(callId);
     const label = [
@@ -5799,10 +6262,9 @@ const appendResponseInputRecord = function appendResponseInputRecord(
     ]
       .filter(Boolean)
       .join(" ");
+    const labelText = label ? ` (${label})` : "";
     lines.push(
-      `TOOL RESULT${label ? ` (${label})` : ""}: ${output || "[empty]"}`
-    );
-    lines.push(
+      `TOOL RESULT${labelText}: ${output || "[empty]"}`,
       `LOCAL TOOL RESULT: ${JSON.stringify(sdkToolResultFeedback(callId, remembered?.name || "", output, toolCallById, tools))}`
     );
     return;
@@ -5810,14 +6272,16 @@ const appendResponseInputRecord = function appendResponseInputRecord(
   lines.push(JSON.stringify(record));
 };
 
-const responseInputToTextAndImages = function responseInputToTextAndImages(
-  input: unknown,
-  tools: OpenAiToolSpec[] = []
-): {
+interface ResponsePromptContent {
   text: string;
   images: CursorImage[];
-} {
-  if (typeof input === "string") {
+}
+
+const responseInputToTextAndImages = function responseInputToTextAndImages(
+  input: ResponseInputValue | undefined,
+  tools: OpenAiToolSpec[] = []
+): ResponsePromptContent {
+  if (isResponseInputString(input)) {
     return { images: [], text: input };
   }
   if (!Array.isArray(input)) {
@@ -5832,16 +6296,16 @@ const responseInputToTextAndImages = function responseInputToTextAndImages(
     string,
     {
       name: string;
-      args: Record<string, unknown>;
+      args: ToolArgumentRecord;
     }
   >();
   for (const item of input) {
-    if (typeof item === "string") {
+    if (isResponseInputString(item)) {
       lines.push(item);
       continue;
     }
     appendResponseInputRecord(
-      expectRecord(item, "input[]"),
+      parseResponseInputRecord(item, "input[]"),
       lines,
       images,
       toolCallById,
@@ -5853,7 +6317,7 @@ const responseInputToTextAndImages = function responseInputToTextAndImages(
 
 const appendResponseOptions = function appendResponseOptions(
   transcript: string[],
-  record: Record<string, unknown>
+  record: ResponseInputRecord
 ) {
   const constraints: string[] = [];
   const maxTokens = integerOrNull(record.max_output_tokens);
@@ -5863,7 +6327,7 @@ const appendResponseOptions = function appendResponseOptions(
     );
   }
   appendStopConstraint(constraints, record.stop);
-  const text = isRecord(record.text) ? record.text : undefined;
+  const text = responseInputRecord(record.text ?? null);
   appendJsonConstraint(constraints, text?.format);
   if (constraints.length) {
     transcript.push(
@@ -5877,7 +6341,7 @@ const appendResponseOptions = function appendResponseOptions(
 const responseInputMessage = function responseInputMessage(
   text: string,
   id: string
-): Record<string, unknown> {
+) {
   return {
     content: [{ text, type: "input_text" }],
     id,
@@ -5886,8 +6350,10 @@ const responseInputMessage = function responseInputMessage(
   };
 };
 
-const responseInputText = function responseInputText(value: unknown): string {
-  if (typeof value === "string") {
+const responseInputText = function responseInputText(
+  value: ResponseInputValue
+): string {
+  if (isResponseInputString(value)) {
     return value;
   }
   if (value === undefined || value === null) {
@@ -5897,40 +6363,64 @@ const responseInputText = function responseInputText(value: unknown): string {
 };
 
 const normalizeResponseInputItem = function normalizeResponseInputItem(
-  item: unknown,
+  item: ResponseInputValue,
   index: number
-): unknown {
-  if (isRecord(item)) {
+) {
+  if (isResponseInputRecord(item)) {
     return item.id === undefined ? { ...item, id: `item_${index}` } : item;
   }
   return responseInputMessage(responseInputText(item), `item_${index}`);
 };
 
 const normalizedResponseInputItems = function normalizedResponseInputItems(
-  input: unknown
-): unknown[] {
+  input: ResponseInputValue | undefined
+) {
   return responseInputArray(input).map(normalizeResponseInputItem);
 };
 
 const responseToolMetadata = function responseToolMetadata(
   tools: OpenAiToolSpec[]
-): Record<string, unknown>[] {
-  return tools.map((tool) => ({
-    name: tool.name,
-    type: "function",
-    ...(tool.description ? { description: tool.description } : {}),
-    ...(tool.parameters === undefined ? {} : { parameters: tool.parameters }),
-  }));
+) {
+  return tools.map((tool) => {
+    const metadata = { name: tool.name, type: "function" as const };
+    const described = tool.description
+      ? { ...metadata, description: tool.description }
+      : metadata;
+    return tool.parameters === undefined
+      ? described
+      : { ...described, parameters: tool.parameters };
+  });
 };
 
 const responseToolChoiceMetadata = function responseToolChoiceMetadata(
-  toolChoice: unknown
-): unknown {
+  toolChoice: ResponseInputValue | undefined
+) {
   return toolChoice === undefined ? "auto" : toolChoice;
 };
 
-export const prepareResponsesRequest = function prepareResponsesRequest(
-  body: unknown,
+const responseModelFromRecord = function responseModelFromRecord(
+  record: ResponseInputRecord
+): string {
+  const model = parseOptionalResponseString(record.model);
+  return model?.trim() ? model.trim() : "composer-2.5";
+};
+
+const previousResponseIdFromRecord = function previousResponseIdFromRecord(
+  record: ResponseInputRecord
+): string | undefined {
+  const responseId = parseOptionalResponseString(record.previous_response_id);
+  return responseId?.trim() ? responseId.trim() : undefined;
+};
+
+/**
+ * Prepares a Responses API request for the Cursor API.
+ * @param body - The Responses request body.
+ * @param cursorModel - The selected Cursor model, if available.
+ * @param options - Prior response input to include in the request.
+ * @returns The normalized request and prompt metadata.
+ */
+export const prepareResponsesRequest = function prepareResponsesRequest<Body>(
+  body: Body,
   cursorModel:
     | {
         id: string;
@@ -5941,7 +6431,7 @@ export const prepareResponsesRequest = function prepareResponsesRequest(
     previousInputItems?: unknown[];
   } = {}
 ): PreparedRequest {
-  const record = expectRecord(body, "body");
+  const record = parseResponseInputRecord(body, "body");
   validateCommonUnsupported(record);
   if (record.background === true) {
     throw new HttpError(
@@ -5957,10 +6447,7 @@ export const prepareResponsesRequest = function prepareResponsesRequest(
     record.input,
     record.instructions
   );
-  const model =
-    typeof record.model === "string" && record.model.trim()
-      ? record.model.trim()
-      : "composer-2.5";
+  const model = responseModelFromRecord(record);
   const latestUserText = latestUserTextFromResponseInput(record.input);
   const workspaceMutationRequired = shouldRequireLocalTool(
     latestUserText,
@@ -5986,7 +6473,7 @@ export const prepareResponsesRequest = function prepareResponsesRequest(
     latestUserText
   );
   const instructions =
-    typeof record.instructions === "string" ? record.instructions.trim() : "";
+    parseOptionalResponseString(record.instructions)?.trim() ?? "";
   if (instructions) {
     transcript.push("", `INSTRUCTIONS:\n${instructions}`);
   }
@@ -5996,40 +6483,43 @@ export const prepareResponsesRequest = function prepareResponsesRequest(
   transcript.push(text || "[empty]");
   appendResponseOptions(transcript, record);
   const prompt = transcript.join("\n");
-  const previousResponseId =
-    typeof record.previous_response_id === "string" &&
-    record.previous_response_id.trim()
-      ? record.previous_response_id.trim()
-      : undefined;
+  const previousResponseId = previousResponseIdFromRecord(record);
   const storeResponse = record.store !== false;
+  const promptContent: CursorPrompt = {
+    mode: tools.length ? "agent" : "ask",
+    text: prompt,
+  };
+  const completePrompt = images.length
+    ? { ...promptContent, images }
+    : promptContent;
+  const baseResponseMetadata = {
+    instructions: instructions || null,
+    max_output_tokens: integerOrNull(record.max_output_tokens),
+    previous_response_id: previousResponseId || null,
+    store: storeResponse,
+    temperature: numberOrNull(record.temperature),
+    text: responseInputRecord(record.text ?? null) ?? {
+      format: { type: "text" },
+    },
+    top_p: numberOrNull(record.top_p),
+  };
+  const responseMetadata = tools.length
+    ? {
+        ...baseResponseMetadata,
+        tool_choice: responseToolChoiceMetadata(record.tool_choice),
+        tools: responseToolMetadata(tools),
+      }
+    : baseResponseMetadata;
   return {
     cursorModel,
     includeUsage: includeStreamUsage(record),
     model,
     previousResponseId,
-    prompt: {
-      mode: tools.length ? "agent" : "ask",
-      text: prompt,
-      ...(images.length ? { images } : {}),
-    },
+    prompt: completePrompt,
     promptChars: prompt.length,
     requiresLocalTool: workspaceMutationRequired && !workspaceMutationDone,
     responseInputItems: normalizedResponseInputItems(record.input),
-    responseMetadata: {
-      instructions: instructions || null,
-      max_output_tokens: integerOrNull(record.max_output_tokens),
-      previous_response_id: previousResponseId || null,
-      store: storeResponse,
-      temperature: numberOrNull(record.temperature),
-      text: isRecord(record.text) ? record.text : { format: { type: "text" } },
-      top_p: numberOrNull(record.top_p),
-      ...(tools.length
-        ? {
-            tool_choice: responseToolChoiceMetadata(record.tool_choice),
-            tools: responseToolMetadata(tools),
-          }
-        : {}),
-    },
+    responseMetadata,
     storeResponse,
     stream: record.stream === true,
     toolContext,
@@ -6047,6 +6537,12 @@ const serializedToolCallLength = function serializedToolCallLength(
   );
 };
 
+/**
+ * Estimates the output character count, including serialized tool calls.
+ * @param text - The generated response text.
+ * @param toolCalls - Tool calls included in the response.
+ * @returns The combined character count.
+ */
 export const completionCharsFromOutput = function completionCharsFromOutput(
   text: string,
   toolCalls: OpenAiToolCall[] = []
@@ -6115,6 +6611,11 @@ const usageFromChars = function usageFromChars(
   };
 };
 
+/**
+ * Builds a non-streaming Chat Completions response.
+ * @param input - Response identifiers, content, usage context, and metadata.
+ * @returns An OpenAI-compatible chat completion object.
+ */
 export const chatCompletionResponse = function chatCompletionResponse(input: {
   id: string;
   created: number;
@@ -6122,23 +6623,26 @@ export const chatCompletionResponse = function chatCompletionResponse(input: {
   text: string;
   toolCalls?: OpenAiToolCall[];
   promptChars: number;
-  metadata?: Record<string, unknown>;
-}): Record<string, unknown> {
+  metadata?: object;
+}) {
   const toolCalls = input.toolCalls ?? [];
   const completionChars = completionCharsFromOutput(input.text, toolCalls);
+  const messageContent = {
+    annotations: [],
+    content: toolCalls.length && !input.text ? null : input.text,
+    refusal: null,
+    role: "assistant" as const,
+  };
+  const message = toolCalls.length
+    ? { ...messageContent, tool_calls: toolCalls }
+    : messageContent;
   return {
     choices: [
       {
         finish_reason: toolCalls.length ? "tool_calls" : "stop",
         index: 0,
         logprobs: null,
-        message: {
-          annotations: [],
-          content: toolCalls.length && !input.text ? null : input.text,
-          refusal: null,
-          role: "assistant",
-          ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
-        },
+        message,
       },
     ],
     created: input.created,
@@ -6169,6 +6673,39 @@ const responseUsageFromChars = function responseUsageFromChars(
   };
 };
 
+type ResponseOutputItem =
+  | {
+      content: { annotations: never[]; text: string; type: "output_text" }[];
+      id: string;
+      role: "assistant";
+      status: "completed";
+      type: "message";
+    }
+  | {
+      arguments: string;
+      call_id: string;
+      id: string;
+      name: string;
+      status: "completed";
+      type: "function_call";
+    };
+
+interface ChatChunkDelta {
+  role?: "assistant";
+  content?: string;
+  tool_calls?: {
+    function: OpenAiToolCall["function"];
+    id: string;
+    index: number;
+    type: "function";
+  }[];
+}
+
+/**
+ * Builds a non-streaming Responses API response.
+ * @param input - Response identifiers, content, usage context, and metadata.
+ * @returns An OpenAI-compatible response object.
+ */
 export const responseObject = function responseObject(input: {
   id: string;
   created: number;
@@ -6176,10 +6713,10 @@ export const responseObject = function responseObject(input: {
   text: string;
   toolCalls?: OpenAiToolCall[];
   promptChars: number;
-  metadata?: Record<string, unknown>;
-}): Record<string, unknown> {
+  metadata?: object;
+}) {
   const messageId = `msg_${input.id.slice(5)}`;
-  const output: Record<string, unknown>[] = [];
+  const output: ResponseOutputItem[] = [];
   if (input.text || !input.toolCalls?.length) {
     output.push({
       content: [
@@ -6233,6 +6770,11 @@ export const responseObject = function responseObject(input: {
   };
 };
 
+/**
+ * Encodes one Chat Completions streaming chunk.
+ * @param input - Chunk identifiers, delta, and completion state.
+ * @returns The encoded server-sent event bytes.
+ */
 export const chatChunk = function chatChunk(input: {
   id: string;
   created: number;
@@ -6246,24 +6788,25 @@ export const chatChunk = function chatChunk(input: {
   finish?: boolean;
   finishReason?: "stop" | "tool_calls";
 }): Uint8Array {
-  const delta = input.finish
-    ? {}
-    : {
-        ...(input.role ? { role: input.role } : {}),
-        ...(input.delta ? { content: input.delta } : {}),
-        ...(input.toolCall
-          ? {
-              tool_calls: [
-                {
-                  function: input.toolCall.value.function,
-                  id: input.toolCall.value.id,
-                  index: input.toolCall.index,
-                  type: input.toolCall.value.type,
-                },
-              ],
-            }
-          : {}),
-      };
+  const delta: ChatChunkDelta = {};
+  if (!input.finish) {
+    if (input.role) {
+      delta.role = input.role;
+    }
+    if (input.delta) {
+      delta.content = input.delta;
+    }
+    if (input.toolCall) {
+      delta.tool_calls = [
+        {
+          function: input.toolCall.value.function,
+          id: input.toolCall.value.id,
+          index: input.toolCall.index,
+          type: input.toolCall.value.type,
+        },
+      ];
+    }
+  }
   const chunk = {
     choices: [
       {
@@ -6282,10 +6825,19 @@ export const chatChunk = function chatChunk(input: {
   return encodeSse(chunk);
 };
 
+/**
+ * Encodes the terminal marker for a Chat Completions stream.
+ * @returns The encoded server-sent event bytes.
+ */
 export const doneChunk = function doneChunk(): Uint8Array {
   return encodeSse("[DONE]");
 };
 
+/**
+ * Encodes a Chat Completions usage chunk.
+ * @param input - Response identifiers and token-count character estimates.
+ * @returns The encoded server-sent event bytes.
+ */
 export const chatUsageChunk = function chatUsageChunk(input: {
   id: string;
   created: number;
@@ -6308,11 +6860,16 @@ export const chatUsageChunk = function chatUsageChunk(input: {
   });
 };
 
+/**
+ * Encodes the created and in-progress events for a Responses stream.
+ * @param input - Response identifiers and optional metadata.
+ * @returns The encoded server-sent event bytes.
+ */
 export const responseCreatedEvents = function responseCreatedEvents(input: {
   id: string;
   created: number;
   model: string;
-  metadata?: Record<string, unknown>;
+  metadata?: object;
 }): Uint8Array[] {
   const base = {
     created_at: input.created,
@@ -6344,6 +6901,15 @@ export const responseCreatedEvents = function responseCreatedEvents(input: {
   ];
 };
 
+const RESPONSE_OUTPUT_ITEM_ADDED_EVENT = "response.output_item.added" as const;
+const RESPONSE_OUTPUT_ITEM_DONE_EVENT = "response.output_item.done" as const;
+const RESPONSE_OUTPUT_TEXT_DONE_EVENT = "response.output_text.done" as const;
+
+/**
+ * Encodes the initial message and content-part events for response text.
+ * @param input - The response ID and output item index.
+ * @returns The encoded server-sent event bytes.
+ */
 export const responseTextStartEvents = function responseTextStartEvents(input: {
   id: string;
   outputIndex: number;
@@ -6360,9 +6926,9 @@ export const responseTextStartEvents = function responseTextStartEvents(input: {
       {
         item,
         output_index: input.outputIndex,
-        type: "response.output_item.added",
+        type: RESPONSE_OUTPUT_ITEM_ADDED_EVENT,
       },
-      "response.output_item.added"
+      RESPONSE_OUTPUT_ITEM_ADDED_EVENT
     ),
     encodeSse(
       {
@@ -6377,6 +6943,11 @@ export const responseTextStartEvents = function responseTextStartEvents(input: {
   ];
 };
 
+/**
+ * Encodes a text delta event for a Responses stream.
+ * @param input - The response ID, text delta, and optional output index.
+ * @returns The encoded server-sent event bytes.
+ */
 export const responseDeltaEvent = function responseDeltaEvent(input: {
   id: string;
   delta: string;
@@ -6394,6 +6965,11 @@ export const responseDeltaEvent = function responseDeltaEvent(input: {
   );
 };
 
+/**
+ * Encodes the events for a tool call in a Responses stream.
+ * @param input - The response ID, tool call, and output item index.
+ * @returns The encoded server-sent event bytes.
+ */
 export const responseToolCallEvents = function responseToolCallEvents(input: {
   id: string;
   toolCall: OpenAiToolCall;
@@ -6417,9 +6993,9 @@ export const responseToolCallEvents = function responseToolCallEvents(input: {
       {
         item,
         output_index: input.outputIndex,
-        type: "response.output_item.added",
+        type: RESPONSE_OUTPUT_ITEM_ADDED_EVENT,
       },
-      "response.output_item.added"
+      RESPONSE_OUTPUT_ITEM_ADDED_EVENT
     ),
     encodeSse(
       {
@@ -6443,13 +7019,18 @@ export const responseToolCallEvents = function responseToolCallEvents(input: {
       {
         item: doneItem,
         output_index: input.outputIndex,
-        type: "response.output_item.done",
+        type: RESPONSE_OUTPUT_ITEM_DONE_EVENT,
       },
-      "response.output_item.done"
+      RESPONSE_OUTPUT_ITEM_DONE_EVENT
     ),
   ];
 };
 
+/**
+ * Encodes the final events for a Responses stream.
+ * @param input - Response identifiers, content, usage context, and metadata.
+ * @returns The encoded server-sent event bytes.
+ */
 export const responseDoneEvents = function responseDoneEvents(input: {
   id: string;
   created: number;
@@ -6457,7 +7038,7 @@ export const responseDoneEvents = function responseDoneEvents(input: {
   text: string;
   toolCalls?: OpenAiToolCall[];
   promptChars: number;
-  metadata?: Record<string, unknown>;
+  metadata?: object;
   textStarted?: boolean;
   textOutputIndex?: number;
 }): Uint8Array[] {
@@ -6479,9 +7060,9 @@ export const responseDoneEvents = function responseDoneEvents(input: {
               item_id: itemId,
               output_index: input.textOutputIndex ?? 0,
               text: input.text,
-              type: "response.output_text.done",
+              type: RESPONSE_OUTPUT_TEXT_DONE_EVENT,
             },
-            "response.output_text.done"
+            RESPONSE_OUTPUT_TEXT_DONE_EVENT
           ),
           encodeSse(
             {
@@ -6497,9 +7078,9 @@ export const responseDoneEvents = function responseDoneEvents(input: {
             {
               item,
               output_index: input.textOutputIndex ?? 0,
-              type: "response.output_item.done",
+              type: RESPONSE_OUTPUT_ITEM_DONE_EVENT,
             },
-            "response.output_item.done"
+            RESPONSE_OUTPUT_ITEM_DONE_EVENT
           ),
         ]
       : [];
@@ -6512,54 +7093,79 @@ export const responseDoneEvents = function responseDoneEvents(input: {
   ];
 };
 
-const modelItem = function modelItem(id: string, name: string) {
+interface ModelListCost {
+  input: number;
+  output: number;
+}
+
+type ModelListField = string | number | ModelListCost;
+
+interface ModelListItem {
+  [key: string]: ModelListField | undefined;
+  created: number;
+  id: string;
+  name: string;
+  object: "model";
+  owned_by: "cursor";
+  cost?: ModelListCost;
+}
+
+const modelItem = function modelItem(id: string, name: string): ModelListItem {
   const pricing = pricingForModel(id);
-  return {
+  const item = {
     created: 1_779_148_800,
     id,
     name,
-    object: "model",
-    owned_by: "cursor",
-    ...(pricing
-      ? { cost: { input: pricing.input, output: pricing.output } }
-      : {}),
+    object: "model" as const,
+    owned_by: "cursor" as const,
   };
+  return pricing
+    ? { ...item, cost: { input: pricing.input, output: pricing.output } }
+    : item;
 };
 
+/**
+ * Lists the models available through the adapter.
+ * @param options - Optional settings for OpenCode naming and SDK models.
+ * @returns The model-list response.
+ */
 export const modelList = function modelList(
   options: {
     opencode?: boolean;
     sdk?: boolean;
   } = {}
-): Record<string, unknown> {
+) {
+  const data = [
+    modelItem("default", "Auto"),
+    modelItem(
+      "composer-2.5",
+      options.opencode ? "Composer 2.5" : "Cursor Composer 2.5"
+    ),
+  ];
+  if (options.sdk) {
+    data.push(modelItem("composer-2.5-sdk", "Composer 2.5 SDK Harness"));
+  }
+  data.push(
+    modelItem("composer-2.5-fast", "Cursor Composer 2.5 Fast"),
+    modelItem("composer-2", "Cursor Composer 2"),
+    modelItem("composer-latest", "Cursor Composer latest alias"),
+    modelItem("gpt-5.3-codex", "Codex 5.3"),
+    modelItem("gpt-5.2-codex", "Codex 5.2"),
+    modelItem("gpt-5.1-codex-max", "Codex 5.1 Max"),
+    modelItem("gpt-5.1-codex-mini", "Codex 5.1 Mini"),
+    modelItem("gpt-5.2", "GPT-5.2"),
+    modelItem("gpt-5.1", "GPT-5.1"),
+    modelItem("gpt-5-mini", "GPT-5 Mini"),
+    modelItem("gemini-3.1-pro", "Gemini 3.1 Pro"),
+    modelItem("gemini-3.5-flash", "Gemini 3.5 Flash"),
+    modelItem("gemini-3-flash", "Gemini 3 Flash"),
+    modelItem("gemini-2.5-flash", "Gemini 2.5 Flash"),
+    modelItem("grok-build-0.1", "Grok Build 0.1"),
+    modelItem("grok-4.3", "Grok 4.3"),
+    modelItem("kimi-k2.5", "Kimi K2.5")
+  );
   return {
-    data: [
-      modelItem("default", "Auto"),
-      modelItem(
-        "composer-2.5",
-        options.opencode ? "Composer 2.5" : "Cursor Composer 2.5"
-      ),
-      ...(options.sdk
-        ? [modelItem("composer-2.5-sdk", "Composer 2.5 SDK Harness")]
-        : []),
-      modelItem("composer-2.5-fast", "Cursor Composer 2.5 Fast"),
-      modelItem("composer-2", "Cursor Composer 2"),
-      modelItem("composer-latest", "Cursor Composer latest alias"),
-      modelItem("gpt-5.3-codex", "Codex 5.3"),
-      modelItem("gpt-5.2-codex", "Codex 5.2"),
-      modelItem("gpt-5.1-codex-max", "Codex 5.1 Max"),
-      modelItem("gpt-5.1-codex-mini", "Codex 5.1 Mini"),
-      modelItem("gpt-5.2", "GPT-5.2"),
-      modelItem("gpt-5.1", "GPT-5.1"),
-      modelItem("gpt-5-mini", "GPT-5 Mini"),
-      modelItem("gemini-3.1-pro", "Gemini 3.1 Pro"),
-      modelItem("gemini-3.5-flash", "Gemini 3.5 Flash"),
-      modelItem("gemini-3-flash", "Gemini 3 Flash"),
-      modelItem("gemini-2.5-flash", "Gemini 2.5 Flash"),
-      modelItem("grok-build-0.1", "Grok Build 0.1"),
-      modelItem("grok-4.3", "Grok 4.3"),
-      modelItem("kimi-k2.5", "Kimi K2.5"),
-    ],
+    data,
     object: "list",
   };
 };
@@ -6567,7 +7173,7 @@ export const modelList = function modelList(
 const normalizeSdkToolCall = function normalizeSdkToolCall(
   toolCall: CursorToolCall
 ): CursorToolCall {
-  const args = toolCall.arguments ?? {};
+  const args = parseResponseInputRecord(toolCall.arguments ?? {}, "arguments");
   if (canonicalToolName(toolCall.name) === "edit") {
     const streamContent = firstStringArgAllowEmpty(
       args,
@@ -6580,13 +7186,13 @@ const normalizeSdkToolCall = function normalizeSdkToolCall(
       "targetFile",
     ]);
     if (streamContent !== undefined && shouldIncludeOptionalPath(path)) {
-      const nextArgs: Record<string, unknown> = {
+      const nextArgs = {
         ...args,
         fileText: streamContent,
         path,
       };
-      delete nextArgs.streamContent;
-      delete nextArgs.stream_content;
+      Reflect.deleteProperty(nextArgs, "streamContent");
+      Reflect.deleteProperty(nextArgs, "stream_content");
       return { arguments: nextArgs, name: "write" };
     }
   }
@@ -6596,7 +7202,7 @@ const normalizeSdkToolCall = function normalizeSdkToolCall(
 const rememberSdkToolCall = function rememberSdkToolCall(
   id: string,
   name: string,
-  args: Record<string, unknown>
+  args: ParsedArgumentRecord
 ) {
   sdkToolCallMemory.set(id, {
     args: { ...args },
@@ -6611,6 +7217,11 @@ const rememberSdkToolCall = function rememberSdkToolCall(
   }
 };
 
+/**
+ * Converts Cursor SDK tool calls to OpenAI-compatible tool calls.
+ * @param input - Tool calls, available tool definitions, and mapping context.
+ * @returns The matching OpenAI-compatible tool calls.
+ */
 export const toOpenAiToolCalls = function toOpenAiToolCalls(input: {
   toolCalls: CursorToolCall[];
   tools?: OpenAiToolSpec[];
@@ -6622,9 +7233,13 @@ export const toOpenAiToolCalls = function toOpenAiToolCalls(input: {
   return input.toolCalls.flatMap((toolCall, offset) => {
     const index = (input.startIndex ?? 0) + offset;
     const normalizedToolCall = normalizeSdkToolCall(toolCall);
+    const argumentsRecord = parseResponseInputRecord(
+      normalizedToolCall.arguments ?? {},
+      "arguments"
+    );
     const tool = resolveToolSpec(
       normalizedToolCall.name,
-      normalizedToolCall.arguments ?? {},
+      argumentsRecord,
       tools
     );
     if (!tool && tools.length > 0) {
@@ -6633,7 +7248,7 @@ export const toOpenAiToolCalls = function toOpenAiToolCalls(input: {
     const name = tool?.name ?? normalizedToolCall.name;
     const sdkCanonical = canonicalToolName(normalizedToolCall.name);
     const toolArguments = normalizeToolArguments(
-      normalizedToolCall.arguments ?? {},
+      argumentsRecord,
       tool,
       normalizedToolCall.name,
       0,
@@ -6643,11 +7258,7 @@ export const toOpenAiToolCalls = function toOpenAiToolCalls(input: {
       return [];
     }
     const id = `call_${input.responseId.replaceAll(/[^A-Za-z0-9]/gu, "").slice(-18)}_${sdkCanonical}_${index}`;
-    rememberSdkToolCall(
-      id,
-      normalizedToolCall.name,
-      normalizedToolCall.arguments ?? {}
-    );
+    rememberSdkToolCall(id, normalizedToolCall.name, argumentsRecord);
     return [
       {
         function: {
@@ -6661,7 +7272,9 @@ export const toOpenAiToolCalls = function toOpenAiToolCalls(input: {
   });
 };
 
-const safeJsonForPrompt = function safeJsonForPrompt(value: unknown): string {
+const safeJsonForPrompt = function safeJsonForPrompt<Value>(
+  value: Value
+): string {
   try {
     const json = JSON.stringify(value);
     if (!json) {
@@ -6673,38 +7286,46 @@ const safeJsonForPrompt = function safeJsonForPrompt(value: unknown): string {
   }
 };
 
-const schemaTypeLabel = function schemaTypeLabel(schema: unknown): string {
-  if (!isRecord(schema)) {
+const parseToolSchemaObject = function parseToolSchemaObject<Value>(
+  schema: Value
+): ToolSchemaObject | undefined {
+  if (!isResponseInputValue(schema) || !isToolJsonObject(schema)) {
+    return undefined;
+  }
+  return schema;
+};
+
+const schemaTypeLabel = function schemaTypeLabel(
+  parsedSchema: ToolSchemaObject | undefined
+): string {
+  if (!parsedSchema) {
     return "unknown";
   }
-  const constValue = typeof schema.const === "string" ? `=${schema.const}` : "";
-  const enumValues = Array.isArray(schema.enum)
-    ? schema.enum.filter((item): item is string => typeof item === "string")
-    : [];
+  const constText = toolJsonString(parsedSchema.const);
+  const constValue = constText === undefined ? "" : `=${constText}`;
+  const enumValues = (parsedSchema.enum ?? [])
+    .map(toolJsonString)
+    .filter((item): item is string => item !== undefined);
   if (enumValues.length) {
     return `enum(${enumValues.join("|")})`;
   }
-  const types = schemaJsonTypes(schema);
+  const types = schemaJsonTypes(parsedSchema);
   return `${types.join("|") || "any"}${constValue}`;
 };
 
 const requiredArgumentSummaryForSchema =
   function requiredArgumentSummaryForSchema(
     prefix: string,
-    schema: unknown
+    parsedSchema: ToolSchemaObject | undefined
   ): string[] {
-    if (!isRecord(schema)) {
+    if (!parsedSchema) {
       return [`${prefix}:unknown`];
     }
-    const nestedProperties = isRecord(schema.properties)
-      ? schema.properties
+    const nestedProperties = isToolJsonObject(parsedSchema.properties)
+      ? parsedSchema.properties
       : {};
     const nestedNames = Object.keys(nestedProperties);
-    const nestedRequired = Array.isArray(schema.required)
-      ? schema.required.filter(
-          (item): item is string => typeof item === "string"
-        )
-      : [];
+    const nestedRequired = parsedSchema.required ?? [];
     if (nestedNames.length && nestedRequired.length) {
       const normalizedProperties = new Map(
         nestedNames.map((property) => [normalizeToolName(property), property])
@@ -6718,20 +7339,20 @@ const requiredArgumentSummaryForSchema =
           ) ?? property;
         return requiredArgumentSummaryForSchema(
           `${prefix}.${canonicalProperty}`,
-          nestedProperties[canonicalProperty]
+          parseToolSchemaObject(nestedProperties[canonicalProperty])
         );
       });
     }
-    if (isRecord(schema.items)) {
+    if (isToolJsonObject(parsedSchema.items)) {
       const itemSummaries = requiredArgumentSummaryForSchema(
         `${prefix}[]`,
-        schema.items
+        parsedSchema.items
       );
       if (itemSummaries.some((item) => item !== `${prefix}[]:unknown`)) {
         return itemSummaries;
       }
     }
-    return [`${prefix}:${schemaTypeLabel(schema)}`];
+    return [`${prefix}:${schemaTypeLabel(parsedSchema)}`];
   };
 
 const toolRequiredArgumentSummary = function toolRequiredArgumentSummary(
@@ -6749,7 +7370,7 @@ const toolRequiredArgumentSummary = function toolRequiredArgumentSummary(
         ) ?? property;
       return requiredArgumentSummaryForSchema(
         canonicalProperty,
-        schema.propertySchemas[canonicalProperty]
+        parseToolSchemaObject(schema.propertySchemas[canonicalProperty])
       );
     })
     .join(", ");
@@ -6765,11 +7386,18 @@ const toolSchemaPropertySummary = function toolSchemaPropertySummary(
   return schema.properties
     .map(
       (property) =>
-        `${property}:${schemaTypeLabel(schema.propertySchemas[property])}`
+        `${property}:${schemaTypeLabel(
+          parseToolSchemaObject(schema.propertySchemas[property])
+        )}`
     )
     .join(", ");
 };
 
+/**
+ * Creates a retry hint for an SDK tool call that cannot be mapped or validated.
+ * @param input - The tool call, available tool definitions, and mapping context.
+ * @returns Instructions describing how the tool call should be retried.
+ */
 export const toolCallRetryHint = function toolCallRetryHint(input: {
   toolCall: CursorToolCall;
   tools?: OpenAiToolSpec[];
@@ -6777,7 +7405,10 @@ export const toolCallRetryHint = function toolCallRetryHint(input: {
 }): string {
   const tools = input.tools ?? [];
   const normalizedToolCall = normalizeSdkToolCall(input.toolCall);
-  const args = normalizedToolCall.arguments ?? {};
+  const args = parseResponseInputRecord(
+    normalizedToolCall.arguments ?? {},
+    "arguments"
+  );
   const tool = resolveToolSpec(normalizedToolCall.name, args, tools);
   if (!tool) {
     if (!tools.length) {

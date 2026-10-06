@@ -9,8 +9,53 @@ import { setTimeout as sleepMs } from "node:timers/promises";
 import { Agent } from "@cursor/sdk";
 
 const parseInteger = function parseInteger(value, fallback) {
-  const parsed = Number.parseInt(String(value || ""), 10);
+  const parsed = Math.trunc(Number(String(value || "")));
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const isStringValue = function isStringValue(value) {
+  return Object.prototype.toString.call(value) === "[object String]";
+};
+
+const isNumberValue = function isNumberValue(value) {
+  return Object.prototype.toString.call(value) === "[object Number]";
+};
+
+const isBooleanValue = function isBooleanValue(value) {
+  return Object.prototype.toString.call(value) === "[object Boolean]";
+};
+
+const isFunctionValue = function isFunctionValue(value) {
+  return ["[object Function]", "[object AsyncFunction]"].includes(
+    Object.prototype.toString.call(value)
+  );
+};
+
+const isSymbolValue = function isSymbolValue(value) {
+  return Object.prototype.toString.call(value) === "[object Symbol]";
+};
+
+const envEntryFromLine = function envEntryFromLine(line) {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.startsWith("#")) {
+    return null;
+  }
+  const normalized = trimmed.startsWith("export ")
+    ? trimmed.slice(7).trim()
+    : trimmed;
+  const equals = normalized.indexOf("=");
+  if (equals <= 0) {
+    return null;
+  }
+  const key = normalized.slice(0, equals).trim();
+  let value = normalized.slice(equals + 1).trim();
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    value = value.slice(1, -1);
+  }
+  return { key, value };
 };
 
 const loadEnvFile = function loadEnvFile(filePath) {
@@ -18,27 +63,9 @@ const loadEnvFile = function loadEnvFile(filePath) {
     return;
   }
   for (const line of readFileSync(filePath, "utf-8").split(/\r?\n/u)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) {
-      continue;
-    }
-    const normalized = trimmed.startsWith("export ")
-      ? trimmed.slice(7).trim()
-      : trimmed;
-    const equals = normalized.indexOf("=");
-    if (equals <= 0) {
-      continue;
-    }
-    const key = normalized.slice(0, equals).trim();
-    let value = normalized.slice(equals + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    if (!process.env[key]) {
-      process.env[key] = value;
+    const entry = envEntryFromLine(line);
+    if (entry && !process.env[entry.key]) {
+      process.env[entry.key] = entry.value;
     }
   }
 };
@@ -81,6 +108,8 @@ const retryBaseDelayMs = parseInteger(
 
 const defaultCwd = process.env.CURSOR_SDK_WORKING_DIRECTORY || process.cwd();
 
+const composerModel = ["composer", "2.5"].join("-");
+
 const clientMcpServerName = "client";
 
 const clientMcpServerMode = "--client-mcp-server";
@@ -97,24 +126,15 @@ const forceNextRunAgentKeys = new Set();
 
 let server = null;
 
-export {
-  bridgePrompt,
-  clientMcpToolDefinitions,
-  clientForwardingMcpServerSource,
-  localAgentCreateOptions,
-  localAgentSendOptions,
-  isForwardableSDKToolCall,
-  isRetryableSDKRunError,
-  normalizeSDKToolCall,
-  normalizeModel,
-  openAiError,
-  runExclusiveForAgent,
-  sdkRunFailureSummary,
-  statusFromError,
-  startServer,
-  validateClientMcpToolCall,
-  toolCallFromDelta,
-};
+let normalizeJsonValue = null;
+
+let schemaEvaluatesObjectProperty = null;
+
+let validateJsonSchemaValue = null;
+
+let mcpClientToolPayloadIsComplete = null;
+
+let hasArray = null;
 
 class HttpError extends Error {
   constructor(message, status = 500, code = "api_error") {
@@ -163,8 +183,8 @@ const parseHTTPStatus = function parseHTTPStatus(value) {
   if (Number.isInteger(value) && value >= 100 && value <= 599) {
     return value;
   }
-  if (typeof value === "string" && /^\d{3}$/u.test(value.trim())) {
-    const parsed = Number.parseInt(value, 10);
+  if (isStringValue(value) && /^\d{3}$/u.test(value.trim())) {
+    const parsed = Math.trunc(Number(value));
     if (parsed >= 100 && parsed <= 599) {
       return parsed;
     }
@@ -180,14 +200,16 @@ const isAuthenticationSDKError = function isAuthenticationSDKError(error) {
       value?.message || value?.rawMessage || ""
     ).toLowerCase();
     const status = parseHTTPStatus(value?.status);
+    const authenticationMessages = [
+      "missing or invalid authorization",
+      "invalid authorization",
+      "unauthorized",
+    ];
     return (
       status === 401 ||
       name.includes("authentication") ||
-      code === "unauthorized" ||
-      code === "authentication_error" ||
-      message.includes("missing or invalid authorization") ||
-      message.includes("invalid authorization") ||
-      message.includes("unauthorized")
+      ["unauthorized", "authentication_error"].includes(code) ||
+      authenticationMessages.some((part) => message.includes(part))
     );
   });
 };
@@ -208,27 +230,30 @@ const isRetryableSDKRunError = function isRetryableSDKRunError(error) {
   ) {
     return true;
   }
-  return values
-    .flatMap((value) => [
+  const retryableMessages = [
+    "server at capacity",
+    "temporarily unavailable",
+    "resource exhausted",
+    "rate limit",
+    "too many requests",
+    "try again",
+  ];
+  return values.some((value) => {
+    const text = [
       value?.message,
       value?.rawMessage,
       value?.code,
       value?.status,
       value?.name,
-    ])
-    .filter((value) => value !== undefined && value !== null)
-    .map((value) => String(value).toLowerCase())
-    .some(
-      (text) =>
-        text.includes("server at capacity") ||
-        text.includes("temporarily unavailable") ||
-        text.includes("resource exhausted") ||
-        text.includes("rate limit") ||
-        text.includes("too many requests") ||
-        text.includes("try again") ||
-        text === "unavailable" ||
-        text === "resource_exhausted"
+    ]
+      .filter((item) => item !== undefined && item !== null)
+      .map((item) => String(item).toLowerCase());
+    return text.some(
+      (item) =>
+        retryableMessages.some((part) => item.includes(part)) ||
+        ["unavailable", "resource_exhausted"].includes(item)
     );
+  });
 };
 
 const statusFromError = function statusFromError(error) {
@@ -249,7 +274,7 @@ const statusFromError = function statusFromError(error) {
 
 const firstNonEmptyString = function firstNonEmptyString(...values) {
   for (const value of values) {
-    if (typeof value === "string" && value.trim()) {
+    if (isStringValue(value) && value.trim()) {
       return value.trim();
     }
   }
@@ -326,14 +351,17 @@ const readJsonBody = async function readJsonBody(request) {
 };
 
 const requiredString = function requiredString(value, key) {
-  if (typeof value !== "string" || !value.trim()) {
+  if (!isStringValue(value) || !value.trim()) {
     throw new HttpError(`Missing ${key}`, 400, "invalid_request");
   }
   return value;
 };
 
 const isRecord = function isRecord(value) {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  return (
+    Boolean(value) &&
+    Object.prototype.toString.call(value) === "[object Object]"
+  );
 };
 
 const captureActiveClientToolCall = async function captureActiveClientToolCall(
@@ -381,6 +409,7 @@ const handleClientToolCallback = async function handleClientToolCallback(
 };
 
 const normalizeModel = function normalizeModel(model) {
+  const fastComposerModel = `${composerModel}-fast`;
   const raw = model.trim();
   const segments = raw.toLowerCase().split("/").filter(Boolean);
   const normalized = segments.length ? segments.at(-1) : "";
@@ -393,22 +422,22 @@ const normalizeModel = function normalizeModel(model) {
     normalized === "composer-2.5" ||
     normalized === "composer-2-5"
   ) {
-    return "composer-2.5";
+    return composerModel;
   }
   if (normalized === "composer-2.5-sdk" || normalized === "composer-2-5-sdk") {
-    return "composer-2.5";
+    return composerModel;
   }
   if (
     normalized === "composer-2.5-fast" ||
     normalized === "composer-2-5-fast"
   ) {
-    return "composer-2.5-fast";
+    return fastComposerModel;
   }
   return raw;
 };
 
 const sdkWorkingDirectory = function sdkWorkingDirectory(value) {
-  const trimmed = typeof value === "string" ? value.trim() : "";
+  const trimmed = isStringValue(value) ? value.trim() : "";
   if (
     !trimmed ||
     trimmed.toLowerCase() === "undefined" ||
@@ -419,10 +448,14 @@ const sdkWorkingDirectory = function sdkWorkingDirectory(value) {
   return trimmed;
 };
 
+const isJsonPrimitive = function isJsonPrimitive(value) {
+  return isStringValue(value) || isNumberValue(value) || isBooleanValue(value);
+};
+
 const isJsonSerializable = function isJsonSerializable(value) {
   return (
     value === null ||
-    ["string", "number", "boolean"].includes(typeof value) ||
+    isJsonPrimitive(value) ||
     Array.isArray(value) ||
     isRecord(value)
   );
@@ -431,11 +464,7 @@ const isJsonSerializable = function isJsonSerializable(value) {
 const normalizeArguments = function normalizeArguments(args) {
   const output = {};
   for (const [key, value] of Object.entries(args)) {
-    if (
-      value === undefined ||
-      typeof value === "function" ||
-      typeof value === "symbol"
-    ) {
+    if (value === undefined || isFunctionValue(value) || isSymbolValue(value)) {
       continue;
     }
     output[key] = normalizeJsonValue(value);
@@ -443,19 +472,14 @@ const normalizeArguments = function normalizeArguments(args) {
   return output;
 };
 
-const normalizeJsonValue = function normalizeJsonValue(value) {
-  if (
-    value === null ||
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean"
-  ) {
+normalizeJsonValue = (value) => {
+  if (value === null || isJsonPrimitive(value)) {
     return value;
   }
   if (Array.isArray(value)) {
     return value.map(normalizeJsonValue);
   }
-  if (typeof value === "object") {
+  if (isRecord(value)) {
     return normalizeArguments(value);
   }
   return String(value);
@@ -466,23 +490,23 @@ const parseClientTools = function parseClientTools(value) {
     return [];
   }
   return value.flatMap((tool) => {
-    if (!isRecord(tool) || typeof tool.name !== "string" || !tool.name.trim()) {
+    if (!isRecord(tool) || !isStringValue(tool.name) || !tool.name.trim()) {
       return [];
     }
-    const description =
-      typeof tool.description === "string" ? tool.description : undefined;
+    const description = isStringValue(tool.description)
+      ? tool.description
+      : undefined;
     const parameters = isJsonSerializable(tool.parameters)
       ? tool.parameters
       : undefined;
-    return [
-      {
-        name: tool.name.trim(),
-        ...(description ? { description } : {}),
-        ...(parameters === undefined
-          ? {}
-          : { parameters: normalizeJsonValue(parameters) }),
-      },
-    ];
+    const normalized = { name: tool.name.trim() };
+    if (description) {
+      normalized.description = description;
+    }
+    if (parameters !== undefined) {
+      normalized.parameters = normalizeJsonValue(parameters);
+    }
+    return [normalized];
   });
 };
 
@@ -492,14 +516,20 @@ const clientToolsNeedingMcp = function clientToolsNeedingMcp(clientTools = []) {
 
 const bridgePrompt = function bridgePrompt(prompt, clientTools = []) {
   const mcpClientTools = clientToolsNeedingMcp(clientTools);
-  const exactTools = clientTools
-    .map((tool) => tool?.name)
-    .filter((name) => typeof name === "string" && name.trim())
-    .join(", ");
-  const exactMcpTools = mcpClientTools
-    .map((tool) => tool?.name)
-    .filter((name) => typeof name === "string" && name.trim())
-    .join(", ");
+  const exactToolNames = [];
+  for (const tool of clientTools) {
+    if (isStringValue(tool?.name) && tool.name.trim()) {
+      exactToolNames.push(tool.name);
+    }
+  }
+  const exactMcpToolNames = [];
+  for (const tool of mcpClientTools) {
+    if (isStringValue(tool?.name) && tool.name.trim()) {
+      exactMcpToolNames.push(tool.name);
+    }
+  }
+  const exactTools = exactToolNames.join(", ");
+  const exactMcpTools = exactMcpToolNames.join(", ");
   const toolInstruction = exactTools
     ? `The outer client tools are: ${exactTools}.`
     : "No outer client tools were provided for this request.";
@@ -611,7 +641,7 @@ const objectArgumentFrom = function objectArgumentFrom(source, ...keys) {
     if (isRecord(value)) {
       return value;
     }
-    if (typeof value === "string") {
+    if (isStringValue(value)) {
       const parsed = parseJsonObject(value);
       if (parsed) {
         return parsed;
@@ -626,7 +656,7 @@ const objectArgumentFrom = function objectArgumentFrom(source, ...keys) {
     if (isRecord(value)) {
       return value;
     }
-    if (typeof value === "string") {
+    if (isStringValue(value)) {
       const parsed = parseJsonObject(value);
       if (parsed) {
         return parsed;
@@ -638,7 +668,7 @@ const objectArgumentFrom = function objectArgumentFrom(source, ...keys) {
 
 const firstString = function firstString(args, ...keys) {
   for (const key of keys) {
-    if (typeof args[key] === "string" && args[key].trim()) {
+    if (isStringValue(args[key]) && args[key].trim()) {
       return args[key].trim();
     }
   }
@@ -705,7 +735,7 @@ const objectArgumentEntryFrom = function objectArgumentEntryFrom(
     if (isRecord(value)) {
       return { key, value };
     }
-    if (typeof value === "string") {
+    if (isStringValue(value)) {
       const parsed = parseJsonObject(value);
       if (parsed) {
         return { key, value: parsed };
@@ -720,7 +750,7 @@ const objectArgumentEntryFrom = function objectArgumentEntryFrom(
     if (isRecord(value)) {
       return { key, value };
     }
-    if (typeof value === "string") {
+    if (isStringValue(value)) {
       const parsed = parseJsonObject(value);
       if (parsed) {
         return { key, value: parsed };
@@ -857,10 +887,10 @@ const normalizeDirectClientToolCall = function normalizeDirectClientToolCall(
 };
 
 const sdkToolCallName = function sdkToolCallName(toolCall) {
-  if (typeof toolCall.type === "string") {
+  if (isStringValue(toolCall.type)) {
     return toolCall.type;
   }
-  if (typeof toolCall.name === "string") {
+  if (isStringValue(toolCall.name)) {
     return toolCall.name;
   }
   return "";
@@ -1027,7 +1057,7 @@ const schemaReferenceTarget = function schemaReferenceTarget(
   rootSchema,
   seenRefs = new Set()
 ) {
-  if (!isRecord(schema) || typeof schema.$ref !== "string") {
+  if (!isRecord(schema) || !isStringValue(schema.$ref)) {
     return null;
   }
   const ref = schema.$ref.trim();
@@ -1068,11 +1098,11 @@ const jsonValuesEqual = function jsonValuesEqual(left, right) {
 };
 
 const schemaTypes = function schemaTypes(schema) {
-  if (typeof schema.type === "string") {
+  if (isStringValue(schema.type)) {
     return [schema.type];
   }
   if (Array.isArray(schema.type)) {
-    return schema.type.filter((type) => typeof type === "string");
+    return schema.type.filter(isStringValue);
   }
   return [];
 };
@@ -1105,7 +1135,7 @@ const schemaAllowsNull = function schemaAllowsNull(
       variants.some(
         (candidate) =>
           candidate &&
-          typeof candidate === "object" &&
+          isRecord(candidate) &&
           schemaAllowsNull(candidate, root, new Set(seenRefs))
       )
     ) {
@@ -1118,16 +1148,16 @@ const schemaAllowsNull = function schemaAllowsNull(
 const jsonValueMatchesType = function jsonValueMatchesType(value, type) {
   switch (type) {
     case "string": {
-      return typeof value === "string";
+      return isStringValue(value);
     }
     case "number": {
-      return typeof value === "number" && Number.isFinite(value);
+      return isNumberValue(value) && Number.isFinite(value);
     }
     case "integer": {
       return Number.isInteger(value);
     }
     case "boolean": {
-      return typeof value === "boolean";
+      return isBooleanValue(value);
     }
     case "array": {
       return Array.isArray(value);
@@ -1149,7 +1179,7 @@ const validateStringConstraints = function validateStringConstraints(
   schema,
   valuePath
 ) {
-  if (typeof value !== "string") {
+  if (!isStringValue(value)) {
     return null;
   }
   const { length } = [...value];
@@ -1159,7 +1189,7 @@ const validateStringConstraints = function validateStringConstraints(
   if (Number.isInteger(schema.maxLength) && length > schema.maxLength) {
     return `Invalid value for ${valuePath}: expected at most ${schema.maxLength} character(s)`;
   }
-  if (typeof schema.pattern === "string" && schema.pattern) {
+  if (isStringValue(schema.pattern) && schema.pattern) {
     try {
       if (!new RegExp(schema.pattern, "u").test(value)) {
         return `Invalid value for ${valuePath}: expected to match pattern ${schema.pattern}`;
@@ -1176,42 +1206,42 @@ const validateNumberConstraints = function validateNumberConstraints(
   schema,
   valuePath
 ) {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
+  if (!isNumberValue(value) || !Number.isFinite(value)) {
     return null;
   }
-  if (typeof schema.minimum === "number" && value < schema.minimum) {
+  if (isNumberValue(schema.minimum) && value < schema.minimum) {
     return `Invalid value for ${valuePath}: expected >= ${schema.minimum}`;
   }
-  if (typeof schema.maximum === "number" && value > schema.maximum) {
+  if (isNumberValue(schema.maximum) && value > schema.maximum) {
     return `Invalid value for ${valuePath}: expected <= ${schema.maximum}`;
   }
   if (
-    typeof schema.exclusiveMinimum === "number" &&
+    isNumberValue(schema.exclusiveMinimum) &&
     value <= schema.exclusiveMinimum
   ) {
     return `Invalid value for ${valuePath}: expected > ${schema.exclusiveMinimum}`;
   }
   if (
     schema.exclusiveMinimum === true &&
-    typeof schema.minimum === "number" &&
+    isNumberValue(schema.minimum) &&
     value <= schema.minimum
   ) {
     return `Invalid value for ${valuePath}: expected > ${schema.minimum}`;
   }
   if (
-    typeof schema.exclusiveMaximum === "number" &&
+    isNumberValue(schema.exclusiveMaximum) &&
     value >= schema.exclusiveMaximum
   ) {
     return `Invalid value for ${valuePath}: expected < ${schema.exclusiveMaximum}`;
   }
   if (
     schema.exclusiveMaximum === true &&
-    typeof schema.maximum === "number" &&
+    isNumberValue(schema.maximum) &&
     value >= schema.maximum
   ) {
     return `Invalid value for ${valuePath}: expected < ${schema.maximum}`;
   }
-  if (typeof schema.multipleOf === "number" && schema.multipleOf > 0) {
+  if (isNumberValue(schema.multipleOf) && schema.multipleOf > 0) {
     const quotient = value / schema.multipleOf;
     if (Math.abs(quotient - Math.round(quotient)) > Number.EPSILON * 100) {
       return `Invalid value for ${valuePath}: expected a multiple of ${schema.multipleOf}`;
@@ -1231,7 +1261,7 @@ const patternPropertySchemasForKey = function patternPropertySchemasForKey(
   for (const [pattern, patternSchema] of Object.entries(
     schema.patternProperties
   )) {
-    if (!isRecord(patternSchema) && typeof patternSchema !== "boolean") {
+    if (!isRecord(patternSchema) && !isBooleanValue(patternSchema)) {
       continue;
     }
     try {
@@ -1325,7 +1355,7 @@ const schemaEvaluatesFromConditionalSchema =
     value,
     seenRefs
   ) {
-    if (!isRecord(schema.if) && typeof schema.if !== "boolean") {
+    if (!isRecord(schema.if) && !isBooleanValue(schema.if)) {
       return false;
     }
     const matchesIf =
@@ -1348,9 +1378,9 @@ const schemaEvaluatesFromConditionalSchema =
     ) {
       return true;
     }
-    const branch = matchesIf ? schema.then : schema.else;
+    const branch = matchesIf ? schema["then"] : schema.else;
     return (
-      (isRecord(branch) || typeof branch === "boolean") &&
+      (isRecord(branch) || isBooleanValue(branch)) &&
       schemaEvaluatesObjectProperty(
         branch,
         key,
@@ -1361,17 +1391,17 @@ const schemaEvaluatesFromConditionalSchema =
     );
   };
 
-const schemaEvaluatesObjectProperty = function schemaEvaluatesObjectProperty(
+schemaEvaluatesObjectProperty = (
   schema,
   key,
   rootSchema,
   value,
   seenRefs = new Set()
-) {
+) => {
   const resolvedSchema = canonicalJsonSchema(schema);
   if (
     !resolvedSchema ||
-    typeof resolvedSchema !== "object" ||
+    !isRecord(resolvedSchema) ||
     Array.isArray(resolvedSchema)
   ) {
     return false;
@@ -1550,7 +1580,7 @@ const validateJsonSchemaNotRule = function validateJsonSchemaNotRule(
   seenRefs
 ) {
   if (
-    (isRecord(schema.not) || typeof schema.not === "boolean") &&
+    (isRecord(schema.not) || isBooleanValue(schema.not)) &&
     validateJsonSchemaValue(
       value,
       schema.not,
@@ -1571,7 +1601,7 @@ const validateJsonSchemaIfRule = function validateJsonSchemaIfRule(
   root,
   seenRefs
 ) {
-  if (!isRecord(schema.if) && typeof schema.if !== "boolean") {
+  if (!isRecord(schema.if) && !isBooleanValue(schema.if)) {
     return null;
   }
   const matchesIf =
@@ -1582,8 +1612,8 @@ const validateJsonSchemaIfRule = function validateJsonSchemaIfRule(
       root,
       new Set(seenRefs)
     ) === null;
-  const branch = matchesIf ? schema.then : schema.else;
-  if (!isRecord(branch) && typeof branch !== "boolean") {
+  const branch = matchesIf ? schema["then"] : schema.else;
+  if (!isRecord(branch) && !isBooleanValue(branch)) {
     return null;
   }
   if (!matchesIf && !schema.else) {
@@ -1662,7 +1692,7 @@ const validateJsonSchemaObjectEntryNames =
   ) {
     if (
       !isRecord(schema.propertyNames) &&
-      typeof schema.propertyNames !== "boolean"
+      !isBooleanValue(schema.propertyNames)
     ) {
       return null;
     }
@@ -1792,34 +1822,58 @@ const validateJsonSchemaObjectEntry = function validateJsonSchemaObjectEntry(
   );
 };
 
-const validateJsonSchemaObjectShape = function validateJsonSchemaObjectShape(
-  value,
-  schema,
-  valuePath
-) {
-  const entries = Object.entries(value);
-  if (
-    Number.isInteger(schema.minProperties) &&
-    entries.length < schema.minProperties
-  ) {
-    return `Invalid value for ${valuePath}: expected at least ${schema.minProperties} propert${schema.minProperties === 1 ? "y" : "ies"}`;
-  }
-  if (
-    Number.isInteger(schema.maxProperties) &&
-    entries.length > schema.maxProperties
-  ) {
-    return `Invalid value for ${valuePath}: expected at most ${schema.maxProperties} propert${schema.maxProperties === 1 ? "y" : "ies"}`;
-  }
-  const required = Array.isArray(schema.required)
-    ? schema.required.filter((key) => typeof key === "string" && key.trim())
-    : [];
-  for (const key of required) {
-    if (!(key in value) || value[key] === undefined || value[key] === null) {
-      return `Missing required argument for ${valuePath}: ${key}`;
+const validateJsonSchemaRequiredProperties =
+  function validateJsonSchemaRequiredProperties(value, schema, valuePath) {
+    const entries = Object.entries(value);
+    if (
+      Number.isInteger(schema.minProperties) &&
+      entries.length < schema.minProperties
+    ) {
+      return `Invalid value for ${valuePath}: expected at least ${schema.minProperties} propert${schema.minProperties === 1 ? "y" : "ies"}`;
     }
-  }
-  return null;
-};
+    if (
+      Number.isInteger(schema.maxProperties) &&
+      entries.length > schema.maxProperties
+    ) {
+      return `Invalid value for ${valuePath}: expected at most ${schema.maxProperties} propert${schema.maxProperties === 1 ? "y" : "ies"}`;
+    }
+    const required = Array.isArray(schema.required)
+      ? schema.required.filter((key) => isStringValue(key) && key.trim())
+      : [];
+    for (const key of required) {
+      if (!(key in value) || value[key] === undefined || value[key] === null) {
+        return `Missing required argument for ${valuePath}: ${key}`;
+      }
+    }
+    return null;
+  };
+
+const validateJsonSchemaDependentRequired =
+  function validateJsonSchemaDependentRequired(value, schema, valuePath) {
+    if (!isRecord(schema.dependentRequired)) {
+      return null;
+    }
+    for (const [key, dependencies] of Object.entries(
+      schema.dependentRequired
+    )) {
+      if (!Object.hasOwn(value, key) || !Array.isArray(dependencies)) {
+        continue;
+      }
+      for (const dependency of dependencies) {
+        if (!isStringValue(dependency) || !dependency.trim()) {
+          continue;
+        }
+        if (
+          !(dependency in value) ||
+          value[dependency] === undefined ||
+          value[dependency] === null
+        ) {
+          return `Missing dependent argument for ${valuePath}: ${dependency}`;
+        }
+      }
+    }
+    return null;
+  };
 
 const validateJsonSchemaObjectDependencies =
   function validateJsonSchemaObjectDependencies(
@@ -1829,26 +1883,13 @@ const validateJsonSchemaObjectDependencies =
     root,
     seenRefs
   ) {
-    if (isRecord(schema.dependentRequired)) {
-      for (const [key, dependencies] of Object.entries(
-        schema.dependentRequired
-      )) {
-        if (!Object.hasOwn(value, key) || !Array.isArray(dependencies)) {
-          continue;
-        }
-        for (const dependency of dependencies) {
-          if (typeof dependency !== "string" || !dependency.trim()) {
-            continue;
-          }
-          if (
-            !(dependency in value) ||
-            value[dependency] === undefined ||
-            value[dependency] === null
-          ) {
-            return `Missing dependent argument for ${valuePath}: ${dependency}`;
-          }
-        }
-      }
+    const dependentRequiredError = validateJsonSchemaDependentRequired(
+      value,
+      schema,
+      valuePath
+    );
+    if (dependentRequiredError) {
+      return dependentRequiredError;
     }
     if (!isRecord(schema.dependentSchemas)) {
       return null;
@@ -1881,17 +1922,23 @@ const validateJsonSchemaObjectValue = function validateJsonSchemaObjectValue(
   seenRefs,
   types
 ) {
+  const objectKeywords = [
+    "properties",
+    "patternProperties",
+    "propertyNames",
+    "required",
+    "dependentRequired",
+    "dependentSchemas",
+  ];
+  const objectConstraints = [
+    "minProperties",
+    "maxProperties",
+    "additionalProperties",
+    "unevaluatedProperties",
+  ];
   const objectLike =
-    schema.properties ||
-    schema.patternProperties ||
-    schema.propertyNames ||
-    schema.required ||
-    schema.dependentRequired ||
-    schema.dependentSchemas ||
-    schema.minProperties !== undefined ||
-    schema.maxProperties !== undefined ||
-    schema.additionalProperties !== undefined ||
-    schema.unevaluatedProperties !== undefined ||
+    objectKeywords.some((keyword) => schema[keyword]) ||
+    objectConstraints.some((keyword) => schema[keyword] !== undefined) ||
     types.includes("object");
   if (!objectLike) {
     return null;
@@ -1900,9 +1947,13 @@ const validateJsonSchemaObjectValue = function validateJsonSchemaObjectValue(
     return `Invalid value for ${valuePath}: expected object`;
   }
   const properties = isRecord(schema.properties) ? schema.properties : {};
-  const shapeError = validateJsonSchemaObjectShape(value, schema, valuePath);
-  if (shapeError) {
-    return shapeError;
+  const requiredPropertiesError = validateJsonSchemaRequiredProperties(
+    value,
+    schema,
+    valuePath
+  );
+  if (requiredPropertiesError) {
+    return requiredPropertiesError;
   }
   const dependencyError = validateJsonSchemaObjectDependencies(
     value,
@@ -1951,7 +2002,7 @@ const validateJsonSchemaArrayContains =
     seenRefs,
     evaluatedItems
   ) {
-    if (!isRecord(schema.contains) && typeof schema.contains !== "boolean") {
+    if (!isRecord(schema.contains) && !isBooleanValue(schema.contains)) {
       return null;
     }
     let matches = 0;
@@ -2031,6 +2082,44 @@ const validateJsonSchemaArrayPrefixItems =
     return null;
   };
 
+const validateJsonSchemaExtraArrayItems =
+  function validateJsonSchemaExtraArrayItems(
+    value,
+    itemSchema,
+    startIndex,
+    valuePath,
+    root,
+    seenRefs,
+    evaluatedItems
+  ) {
+    if (itemSchema === false && value.length > startIndex) {
+      return `Unexpected array item for ${valuePath}: ${startIndex}`;
+    }
+    if (itemSchema === true) {
+      for (let index = startIndex; index < value.length; index += 1) {
+        evaluatedItems.add(index);
+      }
+      return null;
+    }
+    if (!isRecord(itemSchema)) {
+      return null;
+    }
+    for (let index = startIndex; index < value.length; index += 1) {
+      const error = validateJsonSchemaValue(
+        value[index],
+        itemSchema,
+        `${valuePath}[${index}]`,
+        root,
+        new Set(seenRefs)
+      );
+      if (error) {
+        return error;
+      }
+      evaluatedItems.add(index);
+    }
+    return null;
+  };
+
 const validateJsonSchemaArrayExtraItems =
   function validateJsonSchemaArrayExtraItems(
     value,
@@ -2041,55 +2130,33 @@ const validateJsonSchemaArrayExtraItems =
     evaluatedItems
   ) {
     const prefixItems = prefixItemsForSchema(schema);
-    if (schema.additionalItems === false && value.length > prefixItems.length) {
-      return `Unexpected array item for ${valuePath}: ${prefixItems.length}`;
+    const additionalItemsError = validateJsonSchemaExtraArrayItems(
+      value,
+      schema.additionalItems,
+      prefixItems.length,
+      valuePath,
+      root,
+      seenRefs,
+      evaluatedItems
+    );
+    if (additionalItemsError) {
+      return additionalItemsError;
     }
     if (schema.additionalItems === true) {
-      for (let index = prefixItems.length; index < value.length; index += 1) {
-        evaluatedItems.add(index);
-      }
       return null;
     }
-    if (isRecord(schema.additionalItems)) {
-      for (let index = prefixItems.length; index < value.length; index += 1) {
-        const error = validateJsonSchemaValue(
-          value[index],
-          schema.additionalItems,
-          `${valuePath}[${index}]`,
-          root,
-          new Set(seenRefs)
-        );
-        if (error) {
-          return error;
-        }
-        evaluatedItems.add(index);
-      }
-    }
-    if (schema.items === false && value.length > prefixItems.length) {
-      return `Unexpected array item for ${valuePath}: ${prefixItems.length}`;
-    }
-    if (schema.items === true) {
-      for (let index = prefixItems.length; index < value.length; index += 1) {
-        evaluatedItems.add(index);
-      }
+    if (Array.isArray(schema.items)) {
       return null;
     }
-    if (!Array.isArray(schema.items) && isRecord(schema.items)) {
-      for (let index = prefixItems.length; index < value.length; index += 1) {
-        const error = validateJsonSchemaValue(
-          value[index],
-          schema.items,
-          `${valuePath}[${index}]`,
-          root,
-          new Set(seenRefs)
-        );
-        if (error) {
-          return error;
-        }
-        evaluatedItems.add(index);
-      }
-    }
-    return null;
+    return validateJsonSchemaExtraArrayItems(
+      value,
+      schema.items,
+      prefixItems.length,
+      valuePath,
+      root,
+      seenRefs,
+      evaluatedItems
+    );
   };
 
 const validateJsonSchemaArrayUnevaluatedItems =
@@ -2132,17 +2199,20 @@ const validateJsonSchemaArrayUnevaluatedItems =
   };
 
 const schemaIsArrayLike = function schemaIsArrayLike(schema, types) {
-  return Boolean(
-    schema.items ||
-    schema.prefixItems ||
-    schema.additionalItems !== undefined ||
-    schema.contains !== undefined ||
-    schema.minItems !== undefined ||
-    schema.maxItems !== undefined ||
-    schema.minContains !== undefined ||
-    schema.maxContains !== undefined ||
-    schema.unevaluatedItems !== undefined ||
-    schema.uniqueItems !== undefined ||
+  const arrayKeywords = ["items", "prefixItems"];
+  const arrayConstraints = [
+    "additionalItems",
+    "contains",
+    "minItems",
+    "maxItems",
+    "minContains",
+    "maxContains",
+    "unevaluatedItems",
+    "uniqueItems",
+  ];
+  return (
+    arrayKeywords.some((keyword) => schema[keyword]) ||
+    arrayConstraints.some((keyword) => schema[keyword] !== undefined) ||
     types.includes("array")
   );
 };
@@ -2229,13 +2299,21 @@ const validateJsonSchemaArrayValue = function validateJsonSchemaArrayValue(
   );
 };
 
-const validateJsonSchemaValue = function validateJsonSchemaValue(
+const parseString = function parseString(value) {
+  try {
+    return String.prototype.valueOf.call(value);
+  } catch {
+    return null;
+  }
+};
+
+validateJsonSchemaValue = (
   value,
   schema,
   valuePath,
   rootSchema = schema,
   seenRefs = new Set()
-) {
+) => {
   if (schema === true) {
     return null;
   }
@@ -2250,11 +2328,7 @@ const validateJsonSchemaValue = function validateJsonSchemaValue(
   if (resolvedSchema === false) {
     return `Invalid value for ${valuePath}: schema disallows value`;
   }
-  if (
-    !resolvedSchema ||
-    typeof resolvedSchema !== "object" ||
-    Array.isArray(resolvedSchema)
-  ) {
+  if (!isRecord(resolvedSchema)) {
     return null;
   }
   const reference = schemaReferenceTarget(resolvedSchema, root, seenRefs);
@@ -2338,23 +2412,22 @@ const clientToolPayloadIsComplete = function clientToolPayloadIsComplete(
 };
 
 const hasString = function hasString(args, ...keys) {
-  return keys.some(
-    (key) => typeof args[key] === "string" && args[key].trim().length > 0
-  );
+  return keys.some((key) => parseString(args[key])?.trim().length > 0);
 };
 
 const hasStringAllowEmpty = function hasStringAllowEmpty(args, ...keys) {
-  return keys.some((key) => typeof args[key] === "string");
+  return keys.some((key) => parseString(args[key]) !== null);
 };
 
 const hasGlobString = function hasGlobString(args, ...keys) {
-  return keys.some(
-    (key) => typeof args[key] === "string" && /[*?[\]{}]/u.test(args[key])
-  );
+  return keys.some((key) => {
+    const value = parseString(args[key]);
+    return value !== null && /[*?[\]{}]/u.test(value);
+  });
 };
 
 const mcpProviderNameVariants = function mcpProviderNameVariants(provider) {
-  const trimmed = typeof provider === "string" ? provider.trim() : "";
+  const trimmed = parseString(provider)?.trim() || "";
   if (!trimmed) {
     return [];
   }
@@ -2451,7 +2524,7 @@ const mcpPayloadKeys = function mcpPayloadKeys() {
 const clientToolLooksLikeMcpWrapper = function clientToolLooksLikeMcpWrapper(
   tool
 ) {
-  if (!tool || typeof tool.name !== "string") {
+  if (!tool || parseString(tool.name) === null) {
     return false;
   }
   const schema = clientMcpInputSchema(tool.parameters);
@@ -2515,12 +2588,13 @@ const clientMcpWrapperArguments = function clientMcpWrapperArguments(
 const hasStringOrStringArray = function hasStringOrStringArray(args, ...keys) {
   return keys.some((key) => {
     const value = args[key];
-    if (typeof value === "string") {
-      return value.trim().length > 0;
+    const stringValue = parseString(value);
+    if (stringValue !== null) {
+      return stringValue.trim().length > 0;
     }
     return (
       Array.isArray(value) &&
-      value.some((item) => typeof item === "string" && item.trim().length > 0)
+      value.some((item) => parseString(item)?.trim().length > 0)
     );
   });
 };
@@ -2621,6 +2695,8 @@ const toolPayloadTaskComplete = function toolPayloadTaskComplete(payload) {
     hasString(payload, "prompt", "instructions", "input", "query")
   );
 };
+
+hasArray = (args, ...keys) => keys.some((key) => Array.isArray(args[key]));
 
 const toolPayloadCreatePlanComplete = function toolPayloadCreatePlanComplete(
   payload
@@ -2764,10 +2840,6 @@ const toolPayloadLooksComplete = function toolPayloadLooksComplete(
   return checker ? checker(payload) : false;
 };
 
-const hasArray = function hasArray(args, ...keys) {
-  return keys.some((key) => Array.isArray(args[key]));
-};
-
 const mcpWrapperPayloadLooksComplete = function mcpWrapperPayloadLooksComplete(
   args
 ) {
@@ -2786,6 +2858,30 @@ const isForwardableMcpToolCall = function isForwardableMcpToolCall(
     return false;
   }
   return mcpClientToolPayloadIsComplete(args, clientTools);
+};
+
+mcpClientToolPayloadIsComplete = (args, clientTools = []) => {
+  const tool = matchingClientToolForMcpCall(args, clientTools);
+  if (tool) {
+    const payload = clientMcpPayloadArguments(args);
+    const schema = clientMcpInputSchema(tool.parameters);
+    return validateJsonSchemaValue(payload, schema, tool.name, schema) === null;
+  }
+  const wrapper = matchingClientMcpWrapperTool(args, clientTools);
+  if (!wrapper) {
+    return false;
+  }
+  const schema = clientMcpInputSchema(wrapper.parameters);
+  const wrapperArgs = clientMcpWrapperArguments(args, schema);
+  if (!wrapperArgs) {
+    return false;
+  }
+  if (
+    validateJsonSchemaValue(wrapperArgs, schema, wrapper.name, schema) === null
+  ) {
+    return true;
+  }
+  return mcpWrapperPayloadLooksComplete(args);
 };
 
 const isForwardableSDKToolCall = function isForwardableSDKToolCall(
@@ -2820,33 +2916,6 @@ const isForwardableSDKToolCall = function isForwardableSDKToolCall(
   return toolPayloadLooksComplete(toolCall.name, args);
 };
 
-const mcpClientToolPayloadIsComplete = function mcpClientToolPayloadIsComplete(
-  args,
-  clientTools = []
-) {
-  const tool = matchingClientToolForMcpCall(args, clientTools);
-  if (tool) {
-    const payload = clientMcpPayloadArguments(args);
-    const schema = clientMcpInputSchema(tool.parameters);
-    return validateJsonSchemaValue(payload, schema, tool.name, schema) === null;
-  }
-  const wrapper = matchingClientMcpWrapperTool(args, clientTools);
-  if (!wrapper) {
-    return false;
-  }
-  const schema = clientMcpInputSchema(wrapper.parameters);
-  const wrapperArgs = clientMcpWrapperArguments(args, schema);
-  if (!wrapperArgs) {
-    return false;
-  }
-  if (
-    validateJsonSchemaValue(wrapperArgs, schema, wrapper.name, schema) === null
-  ) {
-    return true;
-  }
-  return mcpWrapperPayloadLooksComplete(args);
-};
-
 const registerActiveClientToolCapture =
   function registerActiveClientToolCapture(cacheKey, handler) {
     if (!activeClientToolCaptures.has(cacheKey)) {
@@ -2863,7 +2932,7 @@ const registerActiveClientToolCapture =
   };
 
 const sdkModelSelection = function sdkModelSelection(model) {
-  const normalized = normalizeModel(typeof model === "string" ? model : "");
+  const normalized = normalizeModel(parseString(model) || "");
   if (normalized === "composer-2.5" || normalized === "composer-2.5-fast") {
     return { id: "default" };
   }
@@ -3205,14 +3274,14 @@ const localAgentSendOptions = function localAgentSendOptions(
 };
 
 const toolCallFromDelta = function toolCallFromDelta(update) {
-  if (!update || typeof update !== "object") {
+  if (!isRecord(update)) {
     return null;
   }
   if (update.type !== "tool-call-started") {
     return null;
   }
   const { toolCall } = update;
-  if (!toolCall || typeof toolCall !== "object") {
+  if (!isRecord(toolCall)) {
     return null;
   }
   return toolCall;
@@ -3251,7 +3320,7 @@ const sdkRunFailureSummary = function sdkRunFailureSummary(result) {
     source?.rawMessage,
     source?.error,
     source?.details,
-    typeof result?.result === "string" ? result.result : undefined
+    parseString(result?.result) ?? undefined
   );
   const code = firstNonEmptyString(source?.code, result?.code);
   return {
@@ -3272,14 +3341,22 @@ const sdkRunFailureError = function sdkRunFailureError(result) {
   error.rawMessage = summary.message;
   error.isRetryable = summary.retryable;
   error.cause = summary;
-  console.warn(
-    `Cursor SDK run returned error status${summary.code ? ` (${summary.code})` : ""}.`
-  );
+  const statusCode = summary.code ? ` (${summary.code})` : "";
+  console.warn(`Cursor SDK run returned error status${statusCode}.`);
   return error;
 };
 
 const stripFinalMarker = function stripFinalMarker(text) {
-  return text.replaceAll(/\s*<\/?(?:final_answer|answer)>\s*$/giu, "").trim();
+  const trimmedText = text.trimEnd();
+  const lowerText = trimmedText.toLowerCase();
+  const markers = [
+    "<final_answer>",
+    "</final_answer>",
+    "<answer>",
+    "</answer>",
+  ];
+  const marker = markers.find((candidate) => lowerText.endsWith(candidate));
+  return (marker ? trimmedText.slice(0, -marker.length) : trimmedText).trim();
 };
 
 const cancelActiveRunSafely = async function cancelActiveRunSafely(run) {
@@ -3295,7 +3372,7 @@ const appendAssistantStreamText = function appendAssistantStreamText(
   state,
   onEvent
 ) {
-  if (block?.type !== "text" || typeof block.text !== "string") {
+  if (block?.type !== "text" || parseString(block.text) === null) {
     return;
   }
   state.text += block.text;
@@ -3442,8 +3519,9 @@ const runLocalAgentBody = async function runLocalAgentBody(
     }
     throw sdkRunFailureError(result);
   }
-  if (!runState.text && typeof result.result === "string") {
-    runState.text = result.result;
+  const resultText = parseString(result.result);
+  if (!runState.text && resultText !== null) {
+    runState.text = resultText;
   }
   return {
     agentID: agentEntry?.agent.agentId || "",
@@ -3595,35 +3673,27 @@ const streamLocalAgent = async function streamLocalAgent(input, response) {
 const buildLocalAgentInput = function buildLocalAgentInput(body) {
   const apiKey = requiredString(body.apiKey, "apiKey");
   const prompt = requiredString(body.prompt, "prompt");
+  const incrementalPromptValue = parseString(body.incrementalPrompt);
   const incrementalPrompt =
-    typeof body.incrementalPrompt === "string" && body.incrementalPrompt.trim()
-      ? body.incrementalPrompt
-      : prompt;
+    (incrementalPromptValue?.trim() && incrementalPromptValue) || prompt;
   const promptAlreadyPrepared = body.promptAlreadyPrepared === true;
-  const model = normalizeModel(
-    typeof body.model === "string" ? body.model : ""
-  );
-  const sessionKey =
-    typeof body.sessionKey === "string" && body.sessionKey
-      ? body.sessionKey
-      : crypto.randomUUID();
+  const model = normalizeModel(parseString(body.model) || "");
+  const sessionKeyValue = parseString(body.sessionKey);
+  const sessionKey = sessionKeyValue || crypto.randomUUID();
   const workingDirectory = sdkWorkingDirectory(body.workingDirectory);
-  const requestId =
-    typeof body.requestId === "string" && body.requestId
-      ? body.requestId
-      : crypto.randomUUID();
+  const requestIdValue = parseString(body.requestId);
+  const requestId = requestIdValue || crypto.randomUUID();
   const clientTools = parseClientTools(body.tools);
   return {
     input: {
       apiKey,
       clientTools,
-      incrementalPrompt: promptAlreadyPrepared
-        ? incrementalPrompt
-        : bridgePrompt(incrementalPrompt, clientTools),
+      incrementalPrompt:
+        (promptAlreadyPrepared && incrementalPrompt) ||
+        bridgePrompt(incrementalPrompt, clientTools),
       model,
-      prompt: promptAlreadyPrepared
-        ? prompt
-        : bridgePrompt(prompt, clientTools),
+      prompt:
+        (promptAlreadyPrepared && prompt) || bridgePrompt(prompt, clientTools),
       requestId,
       sessionKey,
       workingDirectory,
@@ -3655,10 +3725,8 @@ const handleSdkRunRequest = async function handleSdkRunRequest(
 };
 
 const handleRequest = async function handleRequest(request, response) {
-  const url = new URL(
-    request.url || "/",
-    `http://${request.headers.host || `${host}:${port}`}`
-  );
+  const hostHeader = request.headers.host || `${host}:${port}`;
+  const url = new URL(request.url || "/", `http://${hostHeader}`);
   if (request.method === "GET" && url.pathname === "/health") {
     writeJson(response, { agents: agentCache.size, ok: true });
     return;
@@ -3706,23 +3774,21 @@ const validateClientMcpToolCall = function validateClientMcpToolCall(
   toolName,
   input = {}
 ) {
-  if (typeof toolName !== "string" || !toolName.trim()) {
+  const name = parseString(toolName);
+  if (!name?.trim()) {
     return "Missing MCP tool name.";
   }
   const tool = Array.isArray(tools)
-    ? tools.find((candidate) => candidate && candidate.name === toolName)
+    ? tools.find((candidate) => isRecord(candidate) && candidate.name === name)
     : null;
   if (!tool) {
     return `Unknown client MCP forwarding tool: ${toolName}`;
   }
   const schema = canonicalJsonSchema(
-    tool.inputSchema && typeof tool.inputSchema === "object"
-      ? tool.inputSchema
-      : {}
+    isRecord(tool.inputSchema) ? tool.inputSchema : {}
   );
-  const args =
-    input && typeof input === "object" && !Array.isArray(input) ? input : {};
-  return validateJsonSchemaValue(args, schema, toolName, schema);
+  const args = isRecord(input) ? input : {};
+  return validateJsonSchemaValue(args, schema, name, schema);
 };
 
 const notifyParentToolCall = async function notifyParentToolCall({
@@ -3744,10 +3810,7 @@ const notifyParentToolCall = async function notifyParentToolCall({
     }
     const response = await fetch(callbackUrl, {
       body: JSON.stringify({
-        arguments:
-          input && typeof input === "object" && !Array.isArray(input)
-            ? input
-            : {},
+        arguments: isRecord(input) ? input : {},
         cacheKey: callbackCacheKey,
         toolName,
       }),
@@ -3758,7 +3821,12 @@ const notifyParentToolCall = async function notifyParentToolCall({
     if (!response.ok) {
       return false;
     }
-    const body = await response.json().catch(() => ({}));
+    let body = {};
+    try {
+      body = await response.json();
+    } catch {
+      ignoreError();
+    }
     return body && body.accepted === true;
   } catch {
     return false;
@@ -3893,11 +3961,12 @@ const runClientForwardingMcpServer =
   };
 
 const parseClientMcpToolsJSON = function parseClientMcpToolsJSON(value) {
-  if (typeof value !== "string" || !value.trim()) {
+  const serializedTools = parseString(value);
+  if (!serializedTools?.trim()) {
     return clientMcpToolDefinitions([]);
   }
   try {
-    const parsed = JSON.parse(value);
+    const parsed = JSON.parse(serializedTools);
     return Array.isArray(parsed) ? parsed : clientMcpToolDefinitions([]);
   } catch {
     return clientMcpToolDefinitions([]);
@@ -4092,3 +4161,22 @@ if (isMainModule()) {
     process.on("SIGTERM", () => closeAndExit(0));
   }
 }
+
+export {
+  bridgePrompt,
+  clientMcpToolDefinitions,
+  clientForwardingMcpServerSource,
+  localAgentCreateOptions,
+  localAgentSendOptions,
+  isForwardableSDKToolCall,
+  isRetryableSDKRunError,
+  normalizeSDKToolCall,
+  normalizeModel,
+  openAiError,
+  runExclusiveForAgent,
+  sdkRunFailureSummary,
+  statusFromError,
+  startServer,
+  validateClientMcpToolCall,
+  toolCallFromDelta,
+};

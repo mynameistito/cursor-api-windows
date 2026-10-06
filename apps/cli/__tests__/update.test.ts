@@ -1,5 +1,5 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir } from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -29,23 +29,23 @@ describe(compareSemver, () => {
 
 describe(isUpdatingInstalledBinary, () => {
   const originalExecPath = process.execPath;
-  let tempDir: string | undefined;
+  let tempDir: string | null = null;
 
   afterEach(() => {
     Object.defineProperty(process, "execPath", { value: originalExecPath });
-    if (tempDir) {
+    if (tempDir !== null) {
       rmSync(tempDir, { force: true, recursive: true });
-      tempDir = undefined;
+      tempDir = null;
     }
   });
 
   it("returns false when the installed exe is missing", () => {
-    tempDir = mkdtempSync(path.join(tmpdir(), "cursor-api-update-"));
+    tempDir = mkdtempSync(path.join(homedir(), ".cursor-api-update-"));
     expect(isUpdatingInstalledBinary(tempDir)).toBeFalsy();
   });
 
   it("returns true when the running binary is the installed exe", () => {
-    tempDir = mkdtempSync(path.join(tmpdir(), "cursor-api-update-"));
+    tempDir = mkdtempSync(path.join(homedir(), ".cursor-api-update-"));
     const exePath = path.join(tempDir, "cursor-api.exe");
     writeFileSync(exePath, "");
     Object.defineProperty(process, "execPath", { value: exePath });
@@ -53,22 +53,32 @@ describe(isUpdatingInstalledBinary, () => {
   });
 
   it("returns false when running from a different path", () => {
-    tempDir = mkdtempSync(path.join(tmpdir(), "cursor-api-update-"));
+    tempDir = mkdtempSync(path.join(homedir(), ".cursor-api-update-"));
     writeFileSync(path.join(tempDir, "cursor-api.exe"), "");
     Object.defineProperty(process, "execPath", {
-      value: path.join(tmpdir(), "cursor-api-dev.exe"),
+      value: path.join(homedir(), "cursor-api-dev.exe"),
     });
     expect(isUpdatingInstalledBinary(tempDir)).toBeFalsy();
   });
 });
 
 describe(buildFinishSelfUpdateScript, () => {
+  let workDir: string | null = null;
+
+  afterEach(() => {
+    if (workDir !== null) {
+      rmSync(workDir, { force: true, recursive: true });
+      workDir = null;
+    }
+  });
+
   it("retries the executable swap and logs failures", () => {
+    workDir = mkdtempSync(path.join(homedir(), ".cursor-api-update-work-"));
     const script = buildFinishSelfUpdateScript({
       parentPid: 1234,
       targetDir: "C:\\Programs\\cursor-api",
       wasRunning: true,
-      workDir: "C:\\Temp\\cursor-api-update",
+      workDir,
     });
 
     expect(
@@ -81,7 +91,7 @@ describe(buildFinishSelfUpdateScript, () => {
       ].every((token) => script.includes(token))
     ).toBeTruthy();
     expect(script).not.toContain(
-      "Remove-Item -LiteralPath 'C:\\Temp\\cursor-api-update' -Recurse"
+      `Remove-Item -LiteralPath '${workDir}' -Recurse`
     );
     expect(script.indexOf("Start-Process -FilePath")).toBeGreaterThan(
       script.indexOf("if (-not $installed)")
@@ -89,11 +99,12 @@ describe(buildFinishSelfUpdateScript, () => {
   });
 
   it("does not restart the daemon when it was not running", () => {
+    workDir = mkdtempSync(path.join(homedir(), ".cursor-api-update-work-"));
     const script = buildFinishSelfUpdateScript({
       parentPid: 1234,
       targetDir: "C:\\Programs\\cursor-api",
       wasRunning: false,
-      workDir: "C:\\Temp\\cursor-api-update",
+      workDir,
     });
 
     expect(script).not.toContain("Start-Process -FilePath");

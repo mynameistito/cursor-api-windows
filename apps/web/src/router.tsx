@@ -2,6 +2,10 @@ import { createRouter as createTanStackRouter } from "@tanstack/react-router";
 
 import { routeTree } from "./routeTree.gen";
 
+/**
+ * Creates the application router with its generated route tree.
+ * @returns The configured application router.
+ */
 export const getRouter = () => {
   const router = createTanStackRouter({
     defaultPreload: "intent",

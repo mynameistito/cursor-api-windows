@@ -1,7 +1,7 @@
 /**
- * Stage the SDK bridge runtime: node.exe + @cursor/sdk + bridge script.
+ * Stage the SDK bridge runtime: node.exe + \@cursor/sdk + bridge script.
  *
- * The bridge cannot be bun-compiled (@cursor/sdk sqlite3 native addon) and must
+ * The bridge cannot be bun-compiled (\@cursor/sdk sqlite3 native addon) and must
  * run under Node (Bun's HTTP/2 client breaks SDK gRPC).
  */
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";

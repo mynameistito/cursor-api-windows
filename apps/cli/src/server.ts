@@ -22,7 +22,6 @@
 import { once } from "node:events";
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { AddressInfo } from "node:net";
 
 import {
   createCursorCompletion,
@@ -68,7 +67,12 @@ import type {
   ToolCallContext,
 } from "@/api/openai";
 import { encodeSse } from "@/api/sse";
-import type { CursorToolCall, Deps, Env } from "@/api/types";
+import type {
+  CursorToolCall,
+  Deps,
+  Env,
+  JsonValue as ApiJsonValue,
+} from "@/api/types";
 import { DEFAULT_PORT, LOCAL_API_KEY_LITERAL } from "@/config";
 
 import {
@@ -84,6 +88,10 @@ const HOST = "127.0.0.1";
 
 // Large enough for local multimodal-sized JSON payloads, small enough to bound daemon memory use.
 export const MAX_REQUEST_BODY_BYTES = 25 * 1024 * 1024;
+
+interface NodeRequestInit extends RequestInit {
+  duplex?: "half";
+}
 
 interface ByteChunkReader {
   read: () => Promise<
@@ -101,7 +109,7 @@ const FAST_MODEL = "composer-2.5-fast";
  * worker's `defaultDeps`, but with no Cloudflare assumptions.
  */
 const deps: Deps = {
-  fetch: ((input, init) => fetch(input, init)) as Deps["fetch"],
+  fetch,
   now: () => new Date(),
   randomUUID: () => crypto.randomUUID(),
 };
@@ -110,8 +118,21 @@ const deps: Deps = {
  * Best-effort, in-memory store for the Responses API so that
  * `GET/DELETE /v1/responses/{id}` can echo a previously created response.
  */
+type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | JsonValue[]
+  | JsonObject;
+
+interface JsonObject {
+  [key: string]: JsonValue | undefined;
+}
+
 interface StoredResponse {
-  response: Record<string, unknown>;
+  response: ReturnType<typeof responseObject>;
   updatedAt: number;
 }
 
@@ -131,6 +152,39 @@ type PreparedRequest =
   | ReturnType<typeof prepareChatRequest>
   | ReturnType<typeof prepareResponsesRequest>;
 
+type ChatRequestBody = Parameters<typeof prepareChatRequest>[0];
+const assetsProperty = "ASSETS";
+const databaseProperty = "DB";
+
+const isJsonObject = function isJsonObject(
+  value: ApiJsonValue | JsonObject
+): value is JsonObject {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+};
+
+const parseChatRequestBody = function parseChatRequestBody(
+  body: string
+): ChatRequestBody {
+  const value: ApiJsonValue = JSON.parse(body);
+  if (!isJsonObject(value)) {
+    throw new HttpError(
+      "Request body must be a JSON object",
+      400,
+      "invalid_request_error"
+    );
+  }
+  return value;
+};
+
+const stringField = function stringField(
+  value: ChatRequestBody | JsonObject,
+  key: string,
+  fallback: string
+): string {
+  const field = value[key];
+  return String(field) === field ? String(field) : fallback;
+};
+
 // ---------------------------------------------------------------------------
 // Streaming glue. This mirrors `streamOpenAiEvents` from `worker/index.ts` but
 // runs the pump directly (no `ExecutionContext.waitUntil`) and skips the
@@ -142,7 +196,7 @@ interface StreamInput {
   model: string;
   promptChars: number;
   includeUsage: boolean;
-  metadata?: Record<string, unknown>;
+  metadata?: JsonObject;
   tools: OpenAiToolSpec[];
   context?: ToolCallContext;
   onDone?: (
@@ -161,10 +215,6 @@ const ignoreError = function ignoreError() {
   void 0;
 };
 
-const BEARER_TOKEN_PATTERN = /^Bearer\s+(?<token>.+)$/iu;
-
-const TRAILING_SLASHES_PATTERN = /\/+$/u;
-
 const MODEL_PATH_PATTERN = /^\/models\/(?<id>.+)$/u;
 
 const RESPONSE_PATH_PATTERN = /^\/responses\/(?<id>[^/]+)$/u;
@@ -178,6 +228,12 @@ const requestCanHaveBody = function requestCanHaveBody(
   return normalized !== "GET" && normalized !== "HEAD";
 };
 
+/** Check whether a request's declared body size exceeds the configured limit.
+ * @param method - HTTP method.
+ * @param rawContentLength - Content-Length header value, if supplied.
+ * @param limit - Maximum permitted body size in bytes.
+ * @returns Whether the declared body exceeds the limit.
+ */
 export const contentLengthExceedsLimit = function contentLengthExceedsLimit(
   method: string,
   rawContentLength: string | string[] | undefined,
@@ -205,6 +261,20 @@ const requestBodyTooLargeError =
     );
   };
 
+const unavailableAssets = function unavailableAssets(): Fetcher {
+  throw new Error("ASSETS is unavailable in the local API server");
+};
+
+const unavailableDatabase = function unavailableDatabase(): D1Database {
+  throw new Error("DB is unavailable in the local API server");
+};
+
+/** Read a request body while enforcing a byte limit.
+ * @param body - Incoming body chunks.
+ * @param limit - Maximum permitted body size in bytes.
+ * @returns The concatenated request body.
+ * The operation throws an HTTP 413 error if the body exceeds the byte limit.
+ */
 export const readBoundedBody = async function readBoundedBody(
   body: AsyncIterable<Uint8Array | string>,
   limit = MAX_REQUEST_BODY_BYTES
@@ -224,7 +294,9 @@ export const readBoundedBody = async function readBoundedBody(
 
 const buildEnv = function buildEnv(): Env {
   return {
-    ASSETS: undefined as unknown as Env["ASSETS"],
+    get [assetsProperty]() {
+      return unavailableAssets();
+    },
     CURSOR_API_BASE: process.env.CURSOR_API_BASE || "https://api.cursor.com",
     CURSOR_BACKEND_BASE_URL: process.env.CURSOR_BACKEND_BASE_URL,
     CURSOR_CHAT_ENDPOINT: process.env.CURSOR_CHAT_ENDPOINT,
@@ -232,7 +304,9 @@ const buildEnv = function buildEnv(): Env {
     CURSOR_SDK_BRIDGE_TIMEOUT_MS: process.env.CURSOR_SDK_BRIDGE_RUN_TIMEOUT_MS,
     CURSOR_SDK_BRIDGE_TOKEN: process.env.CURSOR_SDK_BRIDGE_TOKEN,
     CURSOR_SDK_BRIDGE_URL: process.env.CURSOR_SDK_BRIDGE_URL,
-    DB: undefined as unknown as Env["DB"],
+    get [databaseProperty]() {
+      return unavailableDatabase();
+    },
     ENCRYPTION_KEY: process.env.ENCRYPTION_KEY || "api-for-cursor",
   };
 };
@@ -245,12 +319,14 @@ const hasSdkBridge = function hasSdkBridge(): boolean {
 
 const sessionAffinity = function sessionAffinity(request: Request): string {
   const { headers } = request;
+  const candidates = [
+    "x-session-affinity",
+    "x-opencode-session-id",
+    "x-opencode-session",
+    "idempotency-key",
+  ];
   const candidate =
-    headers.get("x-session-affinity") ||
-    headers.get("x-opencode-session-id") ||
-    headers.get("x-opencode-session") ||
-    headers.get("idempotency-key") ||
-    "";
+    candidates.map((name) => headers.get(name)).find(Boolean) || "";
   const trimmed = candidate.trim();
   return trimmed || `session-${crypto.randomUUID()}`;
 };
@@ -261,7 +337,7 @@ const sdkSessionOwner = function sdkSessionOwner(apiKey: string): string {
 
 const storeResponse = function storeResponse(
   id: string,
-  response: Record<string, unknown>
+  response: ReturnType<typeof responseObject>
 ): void {
   responseStore.set(id, { response, updatedAt: Date.now() });
   if (responseStore.size <= RESPONSE_STORE_LIMIT) {
@@ -278,13 +354,18 @@ const storeResponse = function storeResponse(
   }
 };
 
+/** Resolve the API key from supported request headers.
+ * @param request - Incoming API request.
+ * @returns The resolved Cursor API key, or an empty string when absent.
+ */
 export const resolveApiKey = function resolveApiKey(request: Request): string {
   // Anthropic clients (Claude Code) send the key as `x-api-key`; OpenAI clients use
   // `Authorization: Bearer`. The local placeholder unlocks the stored Cursor key.
   const apiKeyHeader = (request.headers.get("x-api-key") || "").trim();
   const authorization = request.headers.get("authorization") || "";
-  const match = BEARER_TOKEN_PATTERN.exec(authorization.trim());
-  const bearer = match?.groups?.token?.trim() ?? "";
+  const [scheme, ...tokenParts] = authorization.trim().split(/\s+/u);
+  const bearer =
+    scheme?.toLowerCase() === "bearer" ? tokenParts.join(" ").trim() : "";
   const candidate = apiKeyHeader || bearer;
   if (candidate === LOCAL_API_KEY_LITERAL) {
     return (process.env.CURSOR_API_KEY || "").trim();
@@ -307,7 +388,7 @@ const handleModels = function handleModels(): Response {
 };
 
 const handleModel = function handleModel(id: string): Response {
-  const list = modelList().data as Record<string, unknown>[];
+  const { data: list } = modelList();
   const model = list.find((item) => item.id === id);
   if (!model) {
     return openAiError(`Model '${id}' not found`, 404, "not_found", "model");
@@ -339,30 +420,50 @@ const sdkAllowToolCall = function sdkAllowToolCall(
 };
 
 const isTransientSdkError = function isTransientSdkError(
-  error: unknown
+  message: string
 ): boolean {
-  const message = (
-    error instanceof Error ? error.message : String(error ?? "")
-  ).toLowerCase();
-  const status = (
-    error as {
-      status?: number;
-    } | null
-  )?.status;
-  const code = (
-    error as {
-      code?: string;
-    } | null
-  )?.code;
-  return (
-    code === "cursor_sdk_timeout" ||
-    status === 502 ||
-    status === 503 ||
-    status === 504 ||
-    message.includes("timed out") ||
-    message.includes("timeout") ||
-    message.includes("unable to connect")
+  const messageIsTransient = ["timed out", "timeout", "unable to connect"].some(
+    (phrase) => message.includes(phrase)
   );
+  return message.includes("cursor_sdk_timeout") || messageIsTransient;
+};
+
+const runSdkStreamAttempt = async function* runSdkStreamAttempt(
+  make: (attempt: number) => Promise<AsyncIterable<CursorTextEvent>>,
+  maxAttempts: number,
+  attempt: number
+): AsyncGenerator<CursorTextEvent> {
+  const iterable = await make(attempt);
+  const iterator = iterable[Symbol.asyncIterator]();
+  let emitted = false;
+  try {
+    const pump = async function* pump(): AsyncGenerator<CursorTextEvent> {
+      const next = await iterator.next();
+      if (next.done) {
+        return;
+      }
+      emitted = true;
+      yield next.value;
+      yield* pump();
+    };
+    yield* pump();
+  } catch (error) {
+    try {
+      await iterator.return?.();
+    } catch {
+      /* ignore iterator cleanup */
+    }
+    if (
+      !emitted &&
+      attempt + 1 < maxAttempts &&
+      error instanceof Error &&
+      isTransientSdkError(error.message.toLowerCase())
+    ) {
+      yield* runSdkStreamAttempt(make, maxAttempts, attempt + 1);
+      return;
+    }
+    throw error;
+  }
 };
 
 const retryingSdkStream = function retryingSdkStream(
@@ -371,41 +472,7 @@ const retryingSdkStream = function retryingSdkStream(
 ): AsyncIterable<CursorTextEvent> {
   return {
     async *[Symbol.asyncIterator]() {
-      const runAttempt = async function* runAttempt(
-        attempt: number
-      ): AsyncGenerator<CursorTextEvent> {
-        const iterable = await make(attempt);
-        const iterator = iterable[Symbol.asyncIterator]();
-        let emitted = false;
-        try {
-          const pump = async function* pump(): AsyncGenerator<CursorTextEvent> {
-            const next = await iterator.next();
-            if (next.done) {
-              return;
-            }
-            emitted = true;
-            yield next.value;
-            yield* pump();
-          };
-          yield* pump();
-        } catch (error) {
-          try {
-            await iterator.return?.();
-          } catch {
-            /* ignore iterator cleanup */
-          }
-          if (
-            !emitted &&
-            attempt + 1 < maxAttempts &&
-            isTransientSdkError(error)
-          ) {
-            yield* runAttempt(attempt + 1);
-            return;
-          }
-          throw error;
-        }
-      };
-      yield* runAttempt(0);
+      yield* runSdkStreamAttempt(make, maxAttempts, 0);
     },
   };
 };
@@ -655,8 +722,8 @@ const streamOpenAiEvents = function streamOpenAiEvents(
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Stream failed";
-      await writer
-        .write(
+      try {
+        await writer.write(
           encodeSse(
             {
               error: {
@@ -667,10 +734,16 @@ const streamOpenAiEvents = function streamOpenAiEvents(
             },
             "error"
           )
-        )
-        .catch(ignoreError);
+        );
+      } catch {
+        ignoreError();
+      }
     } finally {
-      await writer.close().catch(ignoreError);
+      try {
+        await writer.close();
+      } catch {
+        ignoreError();
+      }
     }
   };
   void pump();
@@ -773,21 +846,15 @@ const handleSdkRoute = async function handleSdkRoute(
 };
 
 const chatIncrementalPrompt = function chatIncrementalPrompt(
-  body: unknown,
+  body: ChatRequestBody,
   cursorModel:
     | {
         id: string;
       }
     | undefined
 ): ReturnType<typeof prepareChatRequest>["prompt"] | undefined {
-  const messages = (
-    body as {
-      messages?: {
-        role?: string;
-      }[];
-    } | null
-  )?.messages;
-  if (!Array.isArray(messages) || messages.length === 0) {
+  const { messages } = body;
+  if (!messages?.length) {
     return undefined;
   }
   let lastAssistant = -1;
@@ -803,14 +870,11 @@ const chatIncrementalPrompt = function chatIncrementalPrompt(
   const tail = messages.slice(lastAssistant + 1);
   try {
     const deltaBody = {
-      ...(body as Record<string, unknown>),
+      ...body,
       messages: tail,
       stream: false,
     };
-    return prepareChatRequest(
-      deltaBody as Parameters<typeof prepareChatRequest>[0],
-      cursorModel
-    ).prompt;
+    return prepareChatRequest(deltaBody, cursorModel).prompt;
   } catch {
     return undefined;
   }
@@ -831,19 +895,8 @@ const handleChatCompletions = async function handleChatCompletions(
   if (!apiKey) {
     return unauthorized();
   }
-  const body = await request.json();
-  const requestedModel =
-    typeof (
-      body as {
-        model?: unknown;
-      }
-    )?.model === "string"
-      ? (
-          body as {
-            model: string;
-          }
-        ).model
-      : PRIMARY_MODEL;
+  const body = parseChatRequestBody(await request.text());
+  const requestedModel = stringField(body, "model", PRIMARY_MODEL);
   const cursorModel = resolveCursorModel(requestedModel);
   const prepared = prepareChatRequest(body, cursorModel);
   const id = `chatcmpl_${crypto.randomUUID().replaceAll("-", "")}`;
@@ -901,19 +954,15 @@ const handleResponses = async function handleResponses(
   if (!apiKey) {
     return unauthorized();
   }
-  const body = await request.json();
-  const requestedModel =
-    typeof (
-      body as {
-        model?: unknown;
-      }
-    )?.model === "string"
-      ? (
-          body as {
-            model: string;
-          }
-        ).model
-      : PRIMARY_MODEL;
+  const body: ApiJsonValue = JSON.parse(await request.text());
+  if (!isJsonObject(body)) {
+    throw new HttpError(
+      "Request body must be a JSON object",
+      400,
+      "invalid_request_error"
+    );
+  }
+  const requestedModel = stringField(body, "model", PRIMARY_MODEL);
   const cursorModel = resolveCursorModel(requestedModel);
   const prepared = prepareResponsesRequest(body, cursorModel);
   const id = `resp_${crypto.randomUUID().replaceAll("-", "")}`;
@@ -972,10 +1021,7 @@ const handleResponses = async function handleResponses(
 };
 
 const anthropicSseResponse = function anthropicSseResponse(
-  events: AsyncGenerator<{
-    event: string;
-    data: Record<string, unknown>;
-  }>
+  events: ReturnType<typeof anthropicSseEvents>
 ): Response {
   const readable = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -1006,23 +1052,15 @@ const handleAnthropicMessages = async function handleAnthropicMessages(
       { status: 401 }
     );
   }
-  const body = await request.json();
-  const requestedModel =
-    body &&
-    typeof body === "object" &&
-    typeof (
-      body as {
-        model?: unknown;
-      }
-    ).model === "string"
-      ? (
-          body as {
-            model: string;
-          }
-        ).model
-      : "claude";
+  const body: ApiJsonValue = JSON.parse(await request.text());
+  const requestedModel = isJsonObject(body)
+    ? stringField(body, "model", "claude")
+    : "claude";
   const cursorModel = resolveCursorModel(mapModel(requestedModel));
-  const prepared = prepareChatRequest(anthropicToChatBody(body), cursorModel);
+  const prepared = prepareChatRequest(
+    parseChatRequestBody(JSON.stringify(anthropicToChatBody(body))),
+    cursorModel
+  );
   const id = `msg_${crypto.randomUUID().replaceAll("-", "")}`;
   const inputTokens = estimateTokens(prepared.promptChars);
   // Claude Code resends the full conversation (incl. tool_result) every turn, so /v1/messages is
@@ -1064,9 +1102,9 @@ const handleAnthropicMessages = async function handleAnthropicMessages(
 const handleCountTokens = async function handleCountTokens(
   request: Request
 ): Promise<Response> {
-  const body = await request.json();
+  const body: ApiJsonValue = JSON.parse(await request.text());
   const prepared = prepareChatRequest(
-    anthropicToChatBody(body),
+    parseChatRequestBody(JSON.stringify(anthropicToChatBody(body))),
     resolveCursorModel(mapModel(""))
   );
   return json({ input_tokens: estimateTokens(prepared.promptChars) });
@@ -1152,8 +1190,12 @@ const route = async function route(
       status: 204,
     });
   }
-  const url = new URL(request.url);
-  const pathname = url.pathname.replace(TRAILING_SLASHES_PATTERN, "") || "/";
+  const { pathname: initialPathname } = new URL(request.url);
+  let pathname = initialPathname;
+  while (pathname.endsWith("/")) {
+    pathname = pathname.slice(0, -1);
+  }
+  pathname ||= "/";
   try {
     if (pathname === "/health") {
       if (request.method !== "GET" && request.method !== "HEAD") {
@@ -1190,7 +1232,7 @@ const toWebRequest = function toWebRequest(
       headers.set(key, value);
     }
   }
-  const init: RequestInit = { headers, method };
+  const init: NodeRequestInit = { headers, method };
   if (requestCanHaveBody(method)) {
     const bodyPromise = readBoundedBody(req);
     init.body = new ReadableStream<Uint8Array>({
@@ -1206,11 +1248,7 @@ const toWebRequest = function toWebRequest(
         }
       },
     });
-    (
-      init as {
-        duplex?: string;
-      }
-    ).duplex = "half";
+    init.duplex = "half";
   }
   return new Request(url, init);
 };
@@ -1242,7 +1280,16 @@ const writeWebResponse = async function writeWebResponse(
     res.end();
     return;
   }
-  const reader = response.body.getReader() as ByteChunkReader;
+  const streamReader = response.body.getReader();
+  const reader: ByteChunkReader = {
+    read: async () => {
+      const result = await streamReader.read();
+      return result.done
+        ? { done: true }
+        : { done: false, value: result.value };
+    },
+    releaseLock: () => streamReader.releaseLock(),
+  };
   try {
     await pumpResponseBody(res, reader);
   } finally {
@@ -1290,12 +1337,16 @@ const parsePort = function parsePort(raw = process.env.PORT): number {
   if (!raw) {
     return DEFAULT_PORT;
   }
-  const value = Number.parseInt(raw, 10);
+  const value = Math.trunc(Number(raw));
   return Number.isInteger(value) && value > 0 && value < 65_536
     ? value
     : DEFAULT_PORT;
 };
 
+/** Start the local HTTP API server.
+ * @param port - TCP port to listen on; defaults to the configured port.
+ * @returns The bound port and an asynchronous close operation.
+ */
 export const startHttpServer = async function startHttpServer(
   port = parsePort()
 ): Promise<HttpServerHandle> {
@@ -1305,8 +1356,9 @@ export const startHttpServer = async function startHttpServer(
   });
   server.listen(port, HOST);
   await once(server, "listening");
-  const address = server.address() as AddressInfo | null;
-  boundPort = address?.port ?? port;
+  const address = server.address();
+  boundPort =
+    address instanceof Object && "port" in address ? address.port : port;
   return {
     close: async () => {
       const closed = once(server, "close");

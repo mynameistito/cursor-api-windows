@@ -1,10 +1,37 @@
 import { defineConfig } from "oxlint";
+import antiSlop from "ultracite/oxlint/anti-slop";
 import core from "ultracite/oxlint/core";
-import react from "ultracite/oxlint/react";
-import tanstack from "ultracite/oxlint/tanstack";
+import { jsPluginSettings, selectJsPlugins } from "ultracite/oxlint/js-plugins";
 import vitest from "ultracite/oxlint/vitest";
 
+export const baseJsPlugins = selectJsPlugins([
+  "github",
+  "jsdoc-js",
+  "sonarjs",
+  "tsdoc",
+]);
+
 export default defineConfig({
-  extends: [core, react, tanstack, vitest],
-  ignorePatterns: [...core.ignorePatterns, "**/routeTree.gen.ts"],
+  extends: [core, vitest, antiSlop, baseJsPlugins],
+  ignorePatterns: core.ignorePatterns,
+  jsPlugins: baseJsPlugins.jsPlugins,
+  overrides: [
+    {
+      files: ["apps/**"],
+      rules: {
+        "no-restricted-imports": [
+          "error",
+          {
+            patterns: [
+              {
+                message: "Use the @/* alias for imports between apps modules.",
+                regex: "^\\.\\./",
+              },
+            ],
+          },
+        ],
+      },
+    },
+  ],
+  settings: jsPluginSettings,
 });

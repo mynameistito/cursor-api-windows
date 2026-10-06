@@ -1,5 +1,5 @@
 import { Monitor, Moon, Sun } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 
 import { Button } from "@/components/ui/button";
 
@@ -10,13 +10,24 @@ const getInitialMode = (): ThemeMode => {
     return "auto";
   }
 
-  const stored = window.localStorage.getItem("theme");
-  if (stored === "light" || stored === "dark" || stored === "auto") {
-    return stored;
+  try {
+    const stored = window.localStorage.getItem("theme");
+    if (stored === "light" || stored === "dark" || stored === "auto") {
+      return stored;
+    }
+  } catch {
+    return "auto";
   }
 
   return "auto";
 };
+
+const subscribeToThemeMode = (onChange: () => void) => {
+  window.addEventListener("storage", onChange);
+  return () => window.removeEventListener("storage", onChange);
+};
+
+const getServerThemeMode = (): ThemeMode => "auto";
 
 const resolveThemeMode = (mode: ThemeMode, prefersDark: boolean) => {
   if (mode !== "auto") {
@@ -58,18 +69,6 @@ const getNextMode = (mode: ThemeMode): ThemeMode => {
   return "light";
 };
 
-const getModeIcon = (mode: ThemeMode) => {
-  if (mode === "auto") {
-    return Monitor;
-  }
-
-  if (mode === "dark") {
-    return Moon;
-  }
-
-  return Sun;
-};
-
 const getModeText = (mode: ThemeMode) => {
   if (mode === "auto") {
     return "Auto";
@@ -82,14 +81,32 @@ const getModeText = (mode: ThemeMode) => {
   return "Light";
 };
 
+const renderModeIcon = (mode: ThemeMode) => {
+  if (mode === "auto") {
+    return <Monitor className="size-4" />;
+  }
+
+  if (mode === "dark") {
+    return <Moon className="size-4" />;
+  }
+
+  return <Sun className="size-4" />;
+};
+
+/**
+ * Renders a button that cycles between light, dark, and system themes.
+ * @returns The theme toggle button.
+ */
 export const ThemeToggle = () => {
-  const [mode, setMode] = useState<ThemeMode>("auto");
+  const mode = useSyncExternalStore(
+    subscribeToThemeMode,
+    getInitialMode,
+    getServerThemeMode
+  );
 
   useEffect(() => {
-    const initialMode = getInitialMode();
-    setMode(initialMode);
-    applyThemeMode(initialMode);
-  }, []);
+    applyThemeMode(mode);
+  }, [mode]);
 
   useEffect(() => {
     if (mode !== "auto") {
@@ -107,17 +124,15 @@ export const ThemeToggle = () => {
 
   const toggleMode = () => {
     const nextMode = getNextMode(mode);
-    setMode(nextMode);
-    applyThemeMode(nextMode);
     window.localStorage.setItem("theme", nextMode);
+    applyThemeMode(nextMode);
+    window.dispatchEvent(new StorageEvent("storage", { key: "theme" }));
   };
 
   const label =
     mode === "auto"
       ? "Theme mode: auto (system). Click to switch to light mode."
       : `Theme mode: ${mode}. Click to switch mode.`;
-
-  const Icon = getModeIcon(mode);
 
   return (
     <Button
@@ -128,7 +143,7 @@ export const ThemeToggle = () => {
       size="sm"
       variant="outline"
     >
-      <Icon className="size-4" />
+      {renderModeIcon(mode)}
       <span className="hidden sm:inline">{getModeText(mode)}</span>
     </Button>
   );
