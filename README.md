@@ -1,155 +1,104 @@
-# cursor-api-windows
+# cursor-api for Windows
 
-CLI-first Windows build of a local **OpenAI-compatible API** backed by **Cursor Composer**. No GUI — install from PowerShell, run `cursor-api` in the terminal, point any OpenAI client at `http://127.0.0.1:6903/v1`.
+`cursor-api` is a Windows CLI and local daemon that exposes Cursor Composer through OpenAI-compatible and Anthropic-compatible HTTP APIs. Run coding-agent clients against your own machine at `http://127.0.0.1:6903`; this project is not a hosted API service.
 
 |  |  |
 | --- | --- |
-| Docs | [cursor-api-windows.mynameistito.com](https://cursor-api-windows.mynameistito.com) |
-| Repo | [mynameistito/cursor-api-windows](https://github.com/mynameistito/cursor-api-windows) |
-| Default base URL | `http://127.0.0.1:6903/v1` |
-| Models | `composer-2.5`, `composer-2.5-fast` |
-| Stack | TypeScript + Bun (compiled CLI) + bundled Node bridge |
+| User guide | [cursor-api-windows.mynameistito.com/docs](https://cursor-api-windows.mynameistito.com/docs) |
+| Website | [cursor-api-windows.mynameistito.com](https://cursor-api-windows.mynameistito.com) |
+| Releases | [GitHub Releases](https://github.com/mynameistito/cursor-api-windows/releases) |
+| Default OpenAI base URL | `http://127.0.0.1:6903/v1` |
+| Default models | `composer-2.5`, `composer-2.5-fast` |
+| Platform | Windows x64 |
 
-> **Credits:** Derived from [standardagents/composer-api](https://github.com/standardagents/composer-api) (MIT). See [CREDITS.md](CREDITS.md) for full attribution.
+## Install and start
 
----
-
-## Install (PowerShell)
-
-Fresh install:
+In PowerShell, install the latest release and save your Cursor API key:
 
 ```powershell
 irm https://cursor-api-windows.mynameistito.com/install.ps1 | iex
-```
-
-Full install steps and client setup: [cursor-api-windows.mynameistito.com/docs](https://cursor-api-windows.mynameistito.com/docs).
-
-Upgrade an existing install:
-
-```powershell
-irm https://cursor-api-windows.mynameistito.com/install.ps1 | iex
-```
-
-From a clone of this repo:
-
-```powershell
-cd cursor-api-windows
-.\scripts\install.ps1
-```
-
----
-
-## Quick start
-
-```powershell
 cursor-api key set
 cursor-api start
-cursor-api status
 cursor-api health
 cursor-api url
 ```
 
-Point any OpenAI-compatible client at the printed URL with model `composer-2.5`.
+Configure a client with the URL printed by `cursor-api url`, a model above, and `cursor-local` as the local API key when the client requires one. The local daemon binds to loopback (`127.0.0.1`); the client API key value is not your Cursor API key. For client-specific steps, request examples, troubleshooting, and the complete CLI reference, see the [online guide](https://cursor-api-windows.mynameistito.com/docs).
 
----
-
-## Commands
+## CLI commands
 
 ```text
-cursor-api key set|status|delete
-cursor-api start|stop|restart|status
-cursor-api logs [-f] [-n 80]
+cursor-api key set [--key <key>] | key status | key delete
+cursor-api start | stop | restart | status
 cursor-api health
-cursor-api port show|set <port>
+cursor-api logs [-f|--follow] [-n|--lines <count>]
+cursor-api port show | port set <port>
 cursor-api url
-cursor-api update check          # check GitHub for new releases
-cursor-api update                # download and install latest
-cursor-api update --force        # reinstall current/latest bundle
-cursor-api configure list
-cursor-api configure agent <id>  # opencode supported in v0.1
+cursor-api configure list | configure agent <id>
+cursor-api update check | update [--force]
 ```
 
-`cursor-api status` also reports whether an update is available.
+`cursor-api configure agent opencode` is the implemented agent configurator. Other listed agent IDs are not currently wired up. `cursor-api status` also checks for a release update when GitHub is reachable.
 
----
+## Documentation
 
-## Updates
-
-| Method | Command |
-| --- | --- |
-| From the CLI | `cursor-api update check` then `cursor-api update` |
-| PowerShell installer | `irm https://cursor-api-windows.mynameistito.com/install.ps1 \| iex` |
-| Manual | Download the latest `.zip` from [Releases](https://github.com/mynameistito/cursor-api-windows/releases) |
-
-Updates stop the background server, replace files in the install directory, and preserve your settings in `%APPDATA%\cursor-api\`.
-
----
+- [Online user guide](https://cursor-api-windows.mynameistito.com/docs) — installation, client configuration, API examples, troubleshooting, and CLI commands.
+- [Documentation index](docs/README.md) — how repository and site documentation fit together.
+- [Architecture](docs/architecture.md) — CLI, daemon, bridge, and request flow.
+- [Local API reference](docs/api.md) — endpoints, authentication, compatibility notes, and known limits.
+- [Website guide](docs/website.md) — pages, frontend architecture, development, build, and deployment.
+- [CLI package README](apps/cli/README.md) and [website package README](apps/web/README.md) — workspace-specific details.
 
 ## Development
 
-Monorepo: **Turborepo** + Bun workspaces.
-
-| App  | Path        | README                                   |
-| ---- | ----------- | ---------------------------------------- |
-| CLI  | `apps/cli/` | [apps/cli/README.md](apps/cli/README.md) |
-| Site | `apps/web/` | [apps/web/README.md](apps/web/README.md) |
+The repository is a Turborepo monorepo using Bun workspaces. Prerequisites are Bun `>=1.2.0` (the repo pins Bun `1.3.14`) and Node.js `>=22`.
 
 ```powershell
 git clone https://github.com/mynameistito/cursor-api-windows.git
 cd cursor-api-windows
 bun install
-bun run stage:bridge
-
-bun run dev:cli key set
-bun run dev:cli start
+bun run dev:web       # Website at http://localhost:3000
 bun run typecheck
-bun run build:cli
-bun run dev:web    # TanStack site on http://localhost:3000
+bun run test
+bun run check
+bun run build         # Build all workspaces
 ```
 
-### Releases and changelog
+Useful app-specific commands:
 
-Releases are managed with [Changesets](https://github.com/changesets/changesets):
-
-1. Add a changeset when your PR includes user-facing CLI changes: `bun run changeset` (or `bun run changeset-add patch "summary"` for agents)
-2. Merge to `main` — the **Release** workflow opens a `chore: version packages` PR when changesets are pending
-3. Merge that version PR — `apps/cli/package.json` and `apps/cli/CHANGELOG.md` are updated on `main`, then the Windows zip is built and uploaded to [GitHub Releases](https://github.com/mynameistito/cursor-api-windows/releases)
-
-Only `@cursor-api-windows/cli` is released to GitHub. `@cursor-api-windows/web` is versioned in the monorepo but not published.
-
-This project is not published to npm (`private: true`). CLI releases are GitHub-only.
-
-`.github/workflows/release.yml` runs changesets on Ubuntu and builds the Windows bundle on `windows-latest`. CI runs typecheck, test, lint, knip, and builds for both apps on pull requests and pushes to `main`.
-
----
-
-## Where things are stored
-
-| Item                | Location                                        |
-| ------------------- | ----------------------------------------------- |
-| Install             | `%LOCALAPPDATA%\Programs\cursor-api\` (default) |
-| Settings            | `%APPDATA%\cursor-api\settings.json`            |
-| API key (encrypted) | `%APPDATA%\cursor-api\api-key.enc`              |
-| PID / state         | `%APPDATA%\cursor-api\run\`                     |
-| Logs                | `%APPDATA%\cursor-api\logs\`                    |
-
-Independent from the [API for Cursor](https://github.com/standardagents/composer-api) GUI app.
-
----
-
-## Architecture
-
-```text
-cursor-api.exe (Bun-compiled CLI)
-  ├─ HTTP server (in-process, src/server.ts + src/api/)
-  └─ bridge/ (child process)
-       node.exe + cursor-sdk-local-agent-bridge.mjs + @cursor/sdk
+```powershell
+bun run stage:bridge
+bun run dev:cli       # Run the CLI in development
+bun run build:cli     # Build the Windows CLI bundle
+bun run dev:web       # Run the website
+bun run build:web     # Build the website
+bun run deploy:web    # Build and deploy the website using Wrangler
 ```
 
-The bridge cannot be compiled into a single file (`sqlite3` native addon + Node HTTP/2). The install bundle always includes `bridge/` next to `cursor-api.exe`.
+See [docs/website.md](docs/website.md) for route generation and website-specific checks. The web app has no automatic Cloudflare deployment workflow in the checked-in GitHub Actions configuration; `deploy:web` is an explicit deployment command.
 
----
+## Releases
 
-## License
+CLI releases are Windows bundles published to [GitHub Releases](https://github.com/mynameistito/cursor-api-windows/releases); the packages are private and are not published to npm. User-facing changes use Changesets. From the repository root, add a CLI changeset with:
 
-MIT — see [LICENSE](LICENSE). Upstream attribution in [CREDITS.md](CREDITS.md).
+```powershell
+bun run changeset-add patch "Describe the user-facing change"
+```
+
+Merging pending changesets to `main` opens a version PR. Once that PR is merged, the release workflow builds and publishes the CLI bundle. The web workspace is versioned in the monorepo but is not published as a package.
+
+## Local data
+
+| Data                     | Default location                      |
+| ------------------------ | ------------------------------------- |
+| Program                  | `%LOCALAPPDATA%\Programs\cursor-api\` |
+| Settings                 | `%APPDATA%\cursor-api\settings.json`  |
+| Encrypted Cursor API key | `%APPDATA%\cursor-api\api-key.enc`    |
+| Daemon state             | `%APPDATA%\cursor-api\run\`           |
+| Logs                     | `%APPDATA%\cursor-api\logs\`          |
+
+The key is encrypted at rest by the CLI. See [Architecture](docs/architecture.md#configuration-and-local-data) for implementation details and [the API reference](docs/api.md#authentication) for the distinction between the stored Cursor key and local client authentication.
+
+## Credits and license
+
+This project is derived from [standardagents/composer-api](https://github.com/standardagents/composer-api) (MIT). See [CREDITS.md](CREDITS.md) for attribution. Licensed under MIT; see [LICENSE](LICENSE).

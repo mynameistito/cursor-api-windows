@@ -32,8 +32,10 @@ const commandGroups = {
   [configGroup]: [
     "cursor-api key set",
     "cursor-api key status",
+    "cursor-api key delete",
     "cursor-api port show",
     "cursor-api port set <port>",
+    "cursor-api configure list",
     "cursor-api configure agent opencode",
   ],
   [opsGroup]: [
@@ -52,9 +54,16 @@ const commandGroups = {
 } as const;
 
 const endpointRows = [
+  ["GET", "/health", "Check the local server and report its URL and models."],
   ["GET", "/v1/models", "List composer-2.5 and composer-2.5-fast."],
+  ["GET", "/v1/models/{id}", "Retrieve one listed model."],
   ["POST", "/v1/chat/completions", "OpenAI chat completions."],
   ["POST", "/v1/responses", "OpenAI Responses API shape."],
+  [
+    "GET / HEAD / DELETE",
+    "/v1/responses/{id}",
+    "Retrieve, inspect, or delete a response held in this process.",
+  ],
   [
     "POST",
     "/v1/messages",
@@ -290,6 +299,7 @@ const docsNav = [
   ["Agent setup", "#agent-setup"],
   ["Requests", "#requests"],
   ["API surface", "#api-surface"],
+  ["Security and limits", "#security"],
   ["Runtime", "#runtime"],
   ["Troubleshooting", "#troubleshooting"],
   ["Commands", "#commands"],
@@ -605,6 +615,54 @@ const SectionHeading = ({
   </div>
 );
 
+const SecuritySection = () => (
+  <section className="border-border border-b py-8" id="security">
+    <SectionHeading
+      description="The API is intended for local clients. Treat the machine and processes running under your Windows account as trusted."
+      title="Security and compatibility limits"
+    />
+    <div className="text-muted-foreground space-y-4 text-sm leading-7">
+      <p>
+        The server listens on <code>127.0.0.1</code>, not on your network
+        interfaces. Requests authenticate with <code>x-api-key</code> or
+        <code> Authorization: Bearer …</code>. Use <code>cursor-local</code> as
+        the client-side placeholder; the daemon resolves it to the saved Cursor
+        API key. A different supplied key is passed through as the credential.
+        Do not share the saved Cursor key with untrusted local software.
+      </p>
+      <p>
+        The saved key is encrypted using AES-256-GCM, with key material derived
+        from the Windows username and computer name. This is not Windows
+        Credential Manager or DPAPI protection. The encrypted file is stored at{" "}
+        <code>%APPDATA%\cursor-api\api-key.enc</code>.
+      </p>
+      <ul className="list-disc space-y-2 pl-5">
+        <li>
+          This is a compatibility layer, not full OpenAI or Anthropic API
+          parity. OpenAI requests with <code>n</code> other than 1, logprobs,
+          non-text output modalities, or audio output are not supported; legacy
+          function-calling fields and background Responses are also unsupported.
+        </li>
+        <li>
+          Response lookup and deletion are best-effort, in-memory only, limited
+          to 512 entries, and lost when the daemon restarts.
+        </li>
+        <li>
+          Anthropic token counts are estimates (roughly one token per four
+          characters), not provider-reported usage. Unsupported image sources
+          may be converted to text; image URLs must use HTTP(S), and each image
+          is limited to 1 MiB.
+        </li>
+        <li>
+          Request bodies are limited to 25 MiB. SDK session/tool-call state is
+          best-effort and expires after six hours; conversation history is not
+          guaranteed to persist across restarts.
+        </li>
+      </ul>
+    </div>
+  </section>
+);
+
 const Docs = () => (
   <main className="mx-auto grid w-full max-w-[1440px] gap-8 px-4 py-10 lg:grid-cols-[13rem_minmax(0,1fr)] lg:px-6 lg:py-12 xl:grid-cols-[13rem_minmax(0,56rem)_17rem]">
     <DocsSidebar />
@@ -672,6 +730,12 @@ const Docs = () => (
           These values are for agent configuration, not for a one-off prompt.
           Use <code>cursor-local</code> as the API key and choose either
           Composer model in the client settings.
+          <p className="mt-2 mb-0">
+            The bundled <code>cursor-api configure agent</code> command
+            currently writes OpenCode configuration only. The Codex, Pi, Kilo
+            Code, Aider, and VS Code instructions below are manual provider
+            setup guidance; those clients are not configured by the CLI command.
+          </p>
         </div>
         <div className="grid gap-5">
           {agentSetupRows.map((agent) => (
@@ -767,8 +831,16 @@ Content-Type: application/json
             Use <code>composer-2.5-fast</code> when you want quicker turn-taking
             for iterative agent work.
           </p>
+          <Separator />
+          <p>
+            Anthropic-compatible requests currently use{" "}
+            <code>composer-2.5</code>
+            regardless of the model name in the request.
+          </p>
         </div>
       </section>
+
+      <SecuritySection />
 
       <section className="border-border border-b py-8" id="runtime">
         <SectionHeading
