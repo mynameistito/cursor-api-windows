@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { applyEdits, modify, parse as parseJsonc } from "jsonc-parser";
 
+import type { JsonObject, JsonValue } from "@/api/types";
 import { LOCAL_API_KEY_LITERAL } from "@/config";
 
 const BRAND = "cursor-api";
@@ -22,8 +23,13 @@ interface AgentInfo {
   status: "configured" | "not_configured" | "not_installed";
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
+const isRecord = (
+  value: JsonValue | undefined
+): value is Extract<JsonValue, JsonObject> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isStringValue = (value: JsonValue | undefined): value is string =>
+  typeof value === "string";
 
 const configHome = function configHome(): string {
   const xdg = process.env.XDG_CONFIG_HOME;
@@ -37,7 +43,10 @@ const opencodeConfigDir = function opencodeConfigDir(): string {
   return path.join(configHome(), "opencode");
 };
 
-/** Resolve OpenCode config path, preferring opencode.jsonc when present. */
+/** Resolve OpenCode config path, preferring opencode.jsonc when present.
+ * @param dir - Directory to search for the OpenCode config.
+ * @returns The selected config path, or the preferred path if neither exists.
+ */
 export const resolveOpencodeConfigPath = function resolveOpencodeConfigPath(
   dir = opencodeConfigDir()
 ): string {
@@ -73,7 +82,7 @@ const backupIfChanged = function backupIfChanged(
 
 const writePrettyJson = function writePrettyJson(
   filePath: string,
-  value: unknown
+  value: JsonObject
 ): void {
   const dir = path.join(filePath, "..");
   mkdirSync(dir, { recursive: true });
@@ -84,13 +93,13 @@ const writePrettyJson = function writePrettyJson(
 
 const readJson = function readJson(
   filePath: string,
-  fallback: Record<string, unknown> = {}
-): Record<string, unknown> {
+  fallback: JsonObject = {}
+): JsonObject {
   if (!existsSync(filePath)) {
     return { ...fallback };
   }
   try {
-    const parsed = JSON.parse(readFileSync(filePath, "utf-8"));
+    const parsed: JsonValue = JSON.parse(readFileSync(filePath, "utf-8"));
     return isRecord(parsed) ? parsed : { ...fallback };
   } catch {
     return { ...fallback };
@@ -99,19 +108,19 @@ const readJson = function readJson(
 
 const readOpencodeRoot = function readOpencodeRoot(
   filePath: string
-): Record<string, unknown> {
+): JsonObject {
   if (!existsSync(filePath)) {
     return {};
   }
   const text = readFileSync(filePath, "utf-8");
   if (filePath.endsWith(".jsonc")) {
-    const parsed = parseJsonc(text);
+    const parsed: JsonValue = parseJsonc(text);
     return isRecord(parsed) ? parsed : {};
   }
   return readJson(filePath);
 };
 
-const costLimitModels = function costLimitModels(): Record<string, unknown> {
+const costLimitModels = function costLimitModels() {
   return {
     "composer-2.5": {
       cost: { input: 0.5, output: 2.5 },
@@ -123,25 +132,23 @@ const costLimitModels = function costLimitModels(): Record<string, unknown> {
       limit: { context: 200_000, output: 65_536 },
       name: "Composer 2.5 Fast",
     },
-  };
+  } satisfies JsonObject;
 };
 
-const cursorapiProvider = function cursorapiProvider(
-  baseUrl: string
-): Record<string, unknown> {
+const cursorapiProvider = function cursorapiProvider(baseUrl: string) {
   return {
     models: costLimitModels(),
     name: BRAND,
     npm: "@ai-sdk/openai-compatible",
     options: { apiKey: LOCAL_API_KEY, baseURL: baseUrl },
-  };
+  } satisfies JsonObject;
 };
 
 const shouldSetDefaultModel = function shouldSetDefaultModel(
-  model: unknown
+  model: JsonValue | undefined
 ): boolean {
   return (
-    typeof model !== "string" ||
+    !isStringValue(model) ||
     !model ||
     model.startsWith("cursor/") ||
     model.startsWith("cursorsdk/")
@@ -156,7 +163,10 @@ const applyJsoncEdits = function applyJsoncEdits(
   return next.endsWith("\n") ? next : `${next}\n`;
 };
 
-/** Configure cursor-api provider in an OpenCode config file (json or jsonc). */
+/** Configure cursor-api provider in an OpenCode config file (json or jsonc).
+ * @param filePath - Path to the OpenCode config file.
+ * @param baseUrl - Local cursor-api base URL to configure.
+ */
 export const configureOpencodeFile = function configureOpencodeFile(
   filePath: string,
   baseUrl: string
@@ -169,7 +179,7 @@ export const configureOpencodeFile = function configureOpencodeFile(
       ? readFileSync(filePath, "utf-8")
       : "{\n}\n";
     for (const key of ["cursor", "cursorsdk"]) {
-      const root = parseJsonc(text);
+      const root: JsonValue = parseJsonc(text);
       const provider =
         isRecord(root) && isRecord(root.provider) ? root.provider : {};
       if (key in provider) {
@@ -187,7 +197,7 @@ export const configureOpencodeFile = function configureOpencodeFile(
         formattingOptions: JSONC_FORMATTING,
       })
     );
-    const root = parseJsonc(text);
+    const root: JsonValue = parseJsonc(text);
     if (isRecord(root) && shouldSetDefaultModel(root.model)) {
       text = applyJsoncEdits(
         text,
@@ -255,6 +265,9 @@ const AGENTS: {
   { id: "pi", name: "pi", status: () => "not_configured" },
 ];
 
+/** Return the configured status of each supported agent.
+ * @returns Agent identifiers, display names, and configuration statuses.
+ */
 export const listAgents = function listAgents(): Promise<AgentInfo[]> {
   return Promise.resolve(
     AGENTS.map((agent) => ({
@@ -265,6 +278,11 @@ export const listAgents = function listAgents(): Promise<AgentInfo[]> {
   );
 };
 
+/** Configure the requested supported agent.
+ * @param agentId - Identifier of the agent to configure.
+ * @param baseUrl - Local cursor-api base URL to configure.
+ * @returns A message describing the configuration result.
+ */
 export const configureAgent = function configureAgent(
   agentId: string,
   baseUrl: string

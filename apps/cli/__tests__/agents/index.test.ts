@@ -18,12 +18,12 @@ import {
 import { LOCAL_API_KEY_LITERAL } from "@/config";
 
 describe(resolveOpencodeConfigPath, () => {
-  let tempDir: string | undefined;
+  let tempDir: string | null = null;
 
   afterEach(() => {
-    if (tempDir) {
+    if (tempDir !== null) {
       rmSync(tempDir, { force: true, recursive: true });
-      tempDir = undefined;
+      tempDir = null;
     }
   });
 
@@ -53,12 +53,12 @@ describe(resolveOpencodeConfigPath, () => {
 });
 
 describe(configureOpencodeFile, () => {
-  let tempDir: string | undefined;
+  let tempDir: string | null = null;
 
   afterEach(() => {
-    if (tempDir) {
+    if (tempDir !== null) {
       rmSync(tempDir, { force: true, recursive: true });
-      tempDir = undefined;
+      tempDir = null;
     }
   });
 
@@ -128,12 +128,9 @@ describe(configureOpencodeFile, () => {
 
     configureOpencodeFile(filePath, "http://127.0.0.1:6903/v1");
 
-    const root = JSON.parse(readFileSync(filePath, "utf-8")) as Record<
-      string,
-      unknown
-    >;
-    expect(root.model).toBe("cursorapi/composer-2.5-fast");
+    const root: unknown = JSON.parse(readFileSync(filePath, "utf-8"));
     expect(root).toMatchObject({
+      model: "cursorapi/composer-2.5-fast",
       provider: {
         cursorapi: {
           options: {
