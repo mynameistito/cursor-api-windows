@@ -13,6 +13,7 @@ const DEFAULT_BRIDGE_PORT = 8792;
 const BRIDGE_PORT_SCAN = 100;
 const BRIDGE_RUN_TIMEOUT_MS = 120_000;
 
+/** Information and controls for a running bridge process. */
 export interface BridgeHandle {
   port: number;
   token: string;
@@ -85,7 +86,9 @@ const waitForChildExit = async (child: ChildProcess): Promise<void> => {
   await once(child, "exit");
 };
 
-/** Spawn the @cursor/sdk bridge (must run under Node, not Bun). */
+/** Spawn the \@cursor/sdk bridge (must run under Node, not Bun).
+ * @returns Handle for the running bridge process and its local connection details.
+ */
 export const startBridge = async (): Promise<BridgeHandle> => {
   assertBridgeRuntime();
 
@@ -130,5 +133,9 @@ export const startBridge = async (): Promise<BridgeHandle> => {
   };
 };
 
+/** Build the local URL for the SDK bridge.
+ * @param port - TCP port where the bridge is listening.
+ * @returns The bridge's local SDK endpoint URL.
+ */
 export const bridgeUrl = (port: number): string =>
   `http://127.0.0.1:${port}/sdk`;
