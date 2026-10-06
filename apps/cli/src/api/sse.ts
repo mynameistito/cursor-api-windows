@@ -29,37 +29,33 @@ const parseFrame = (frame: string): SseEvent | null => {
   return { data: data.join("\n"), event, id };
 };
 
-interface ByteChunkReader {
-  read: () => Promise<
-    { done: false; value: Uint8Array } | { done: true; value?: undefined }
-  >;
-  releaseLock: () => void;
-}
-
-const readReaderChunks = async function* readReaderChunks(
-  reader: ByteChunkReader
-): AsyncGenerator<Uint8Array> {
-  const { value, done } = await reader.read();
-  if (done) {
-    return;
-  }
-  if (value) {
-    yield value;
-  }
-  yield* readReaderChunks(reader);
-};
-
 const readStreamChunks = async function* readStreamChunks(
   stream: ReadableStream<Uint8Array>
 ): AsyncGenerator<Uint8Array> {
-  const reader = stream.getReader() as ByteChunkReader;
+  const reader = stream.getReader();
+  const readChunks = async function* readChunks(): AsyncGenerator<Uint8Array> {
+    const { value, done } = await reader.read();
+    if (done) {
+      return;
+    }
+    if (value) {
+      yield value;
+    }
+    yield* readChunks();
+  };
+
   try {
-    yield* readReaderChunks(reader);
+    yield* readChunks();
   } finally {
     reader.releaseLock();
   }
 };
 
+/**
+ * Parse server-sent events from a byte stream.
+ * @param stream - The response stream, or `null` when no body exists.
+ * @returns Parsed events in stream order.
+ */
 export const parseSse = async function* parseSse(
   stream: ReadableStream<Uint8Array> | null
 ): AsyncGenerator<SseEvent> {
@@ -90,12 +86,22 @@ export const parseSse = async function* parseSse(
   }
 };
 
-export const encodeSse = (data: unknown, event?: string): Uint8Array => {
+/**
+ * Encode a value as one server-sent event frame.
+ * @param data - The event payload.
+ * @param event - An optional event type.
+ * @returns The encoded event frame.
+ */
+export const encodeSse = <Payload>(
+  data: Payload,
+  event?: string
+): Uint8Array => {
   const lines: string[] = [];
   if (event) {
     lines.push(`event: ${event}`);
   }
-  const payload = typeof data === "string" ? data : JSON.stringify(data);
+  const payload =
+    data === String(data) ? String(data) : (JSON.stringify(data) ?? "");
   for (const line of payload.split("\n")) {
     lines.push(`data: ${line}`);
   }

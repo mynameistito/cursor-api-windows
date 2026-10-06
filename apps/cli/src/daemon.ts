@@ -43,7 +43,7 @@ const readPid = function readPid(): number | null {
     return null;
   }
   const raw = readFileSync(pidFilePath(), "utf-8").trim();
-  const pid = Number.parseInt(raw, 10);
+  const pid = Math.trunc(Number(raw));
   return Number.isInteger(pid) && pid > 0 ? pid : null;
 };
 
@@ -72,7 +72,36 @@ const readState = function readState(): DaemonState | null {
     return null;
   }
   try {
-    return JSON.parse(readFileSync(stateFilePath(), "utf-8")) as DaemonState;
+    const state: Partial<DaemonState> = JSON.parse(
+      readFileSync(stateFilePath(), "utf-8")
+    );
+    if (Object.prototype.toString.call(state) !== "[object Object]") {
+      return null;
+    }
+    const hasValidPid = Number.isInteger(state.pid);
+    const hasValidPort = Number.isInteger(state.port);
+    const hasValidBridgePort =
+      state.bridgePort === null || Number.isInteger(state.bridgePort);
+    const hasValidStartedAt =
+      Object.prototype.toString.call(state.startedAt) === "[object String]";
+    const hasValidApiKeyFingerprint =
+      state.apiKeyFingerprint === undefined ||
+      Object.prototype.toString.call(state.apiKeyFingerprint) ===
+        "[object String]";
+    if (!hasValidPid || !hasValidPort || !hasValidBridgePort) {
+      return null;
+    }
+    if (!hasValidStartedAt || !hasValidApiKeyFingerprint) {
+      return null;
+    }
+    return {
+      ...state,
+      apiKeyFingerprint: state.apiKeyFingerprint,
+      bridgePort: state.bridgePort === null ? null : Number(state.bridgePort),
+      pid: Number(state.pid),
+      port: Number(state.port),
+      startedAt: String(state.startedAt),
+    };
   } catch {
     return null;
   }
@@ -84,7 +113,11 @@ const clearState = function clearState(): void {
   }
 };
 
-/** Whether tasklist stdout indicates the given PID is running. */
+/** Whether tasklist stdout indicates the given PID is running.
+ * @param stdout - Output returned by tasklist.
+ * @param pid - Process ID to look for.
+ * @returns Whether stdout contains the PID as a process entry.
+ */
 export const tasklistOutputContainsPid = function tasklistOutputContainsPid(
   stdout: string,
   pid: number
@@ -119,6 +152,9 @@ const daemonSpawnArgs = function daemonSpawnArgs(): string[] {
   return ["daemon"];
 };
 
+/** Read the daemon status and clean up stale PID and state files.
+ * @returns Current process, port, bridge, and API-key status.
+ */
 export const getStatus = async function getStatus(): Promise<{
   running: boolean;
   pid: number | null;
@@ -146,6 +182,12 @@ export const getStatus = async function getStatus(): Promise<{
   };
 };
 
+/** Check whether the running daemon matches the requested configuration.
+ * @param state - Persisted state for the running daemon, if available.
+ * @param port - Configured local server port.
+ * @param apiKey - Configured Cursor API key.
+ * @returns Whether the port and API-key fingerprint match.
+ */
 export const runningConfigMatches = function runningConfigMatches(
   state: DaemonState | null,
   port: number,
@@ -174,6 +216,9 @@ const spawnDaemon = function spawnDaemon(port: number): void {
   console.log("Check status: cursor-api status");
 };
 
+/** Stop the daemon process and clear its runtime state.
+ * @param options - Optional controls for command output.
+ */
 export const stopDaemon = async function stopDaemon(options?: {
   quiet?: boolean;
 }): Promise<void> {
@@ -200,10 +245,10 @@ export const stopDaemon = async function stopDaemon(options?: {
   }
 };
 
+/** Start the daemon in the background, restarting it if configuration changed. */
 export const startDaemon = async function startDaemon(): Promise<void> {
   const settings = loadSettings();
-  const apiKey = await readApiKey();
-  const status = await getStatus();
+  const [apiKey, status] = await Promise.all([readApiKey(), getStatus()]);
   const state = readState();
   if (status.running) {
     if (runningConfigMatches(state, settings.port, apiKey)) {
@@ -232,6 +277,8 @@ export const startDaemon = async function startDaemon(): Promise<void> {
   spawnDaemon(settings.port);
 };
 
+/** Run the daemon server and bridge in the foreground.
+ */
 export const runDaemonForeground =
   async function runDaemonForeground(): Promise<void> {
     const existing = readPid();
@@ -293,6 +340,10 @@ export const runDaemonForeground =
     });
   };
 
+/** Check whether the local server responds to its health endpoint.
+ * @param port - Local server port; defaults to the configured port.
+ * @returns The health endpoint response.
+ */
 export const checkHealth = function checkHealth(
   port = loadSettings().port
 ): Promise<Response> {

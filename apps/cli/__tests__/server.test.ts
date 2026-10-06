@@ -1,13 +1,13 @@
 import { once } from "node:events";
 import { mkdtempSync, rmSync } from "node:fs";
 import { request } from "node:http";
-import type { IncomingMessage } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import type { JsonValue } from "@/api/types";
 import { LOCAL_API_KEY_LITERAL } from "@/config";
 import {
   contentLengthExceedsLimit,
@@ -22,16 +22,44 @@ interface TestServer {
   close: () => Promise<void>;
 }
 
-const readJson = async function readJson(
-  response: Response
-): Promise<Record<string, unknown>> {
-  return (await response.json()) as Record<string, unknown>;
+const isJsonValue = (value: unknown): value is JsonValue => {
+  if (value === null) {
+    return true;
+  }
+  if (Array.isArray(value)) {
+    return value.every(isJsonValue);
+  }
+  switch (typeof value) {
+    case "boolean": {
+      return true;
+    }
+    case "number": {
+      return true;
+    }
+    case "string": {
+      return true;
+    }
+    case "object": {
+      return Object.values(value).every(isJsonValue);
+    }
+    default: {
+      return false;
+    }
+  }
+};
+
+const readJson = async (response: Response): Promise<JsonValue> => {
+  const value: unknown = await response.json();
+  if (!isJsonValue(value)) {
+    throw new Error("Response body was not valid JSON");
+  }
+  return value;
 };
 
 const postWithOversizedContentLength =
   async function postWithOversizedContentLength(
     port: number
-  ): Promise<{ body: Record<string, unknown>; status: number }> {
+  ): Promise<{ body: unknown; status: number }> {
     const req = request({
       headers: {
         connection: "close",
@@ -44,15 +72,12 @@ const postWithOversizedContentLength =
       port,
     });
     req.end();
-    const [res] = (await once(req, "response")) as [IncomingMessage];
+    const [res] = await once(req, "response");
     const chunks: Buffer[] = [];
     for await (const chunk of res) {
       chunks.push(Buffer.from(chunk));
     }
-    const body = JSON.parse(Buffer.concat(chunks).toString("utf-8")) as Record<
-      string,
-      unknown
-    >;
+    const body: unknown = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
     return { body, status: res.statusCode ?? 0 };
   };
 
@@ -110,12 +135,12 @@ describe(startHttpServer, () => {
     const body = await readJson(response);
 
     expect(response.status).toBe(200);
-    expect(body.object).toBe("list");
-    expect(body.data).toStrictEqual(
-      expect.arrayContaining([
+    expect(body).toMatchObject({
+      data: expect.arrayContaining([
         expect.objectContaining({ id: "composer-2.5", object: "model" }),
-      ])
-    );
+      ]),
+      object: "list",
+    });
   });
 
   it("returns the not-found error shape for unsupported methods", async () => {
