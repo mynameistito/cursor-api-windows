@@ -69,11 +69,16 @@ const deleteFile = (): void => {
   }
 };
 
-/** Read the stored Cursor API key, or empty string when unset. */
+/** Read the stored Cursor API key, or empty string when unset.
+ * @returns The decrypted API key, or an empty string when unavailable.
+ */
 export const readApiKey = (): Promise<string> =>
   Promise.resolve(readFromFile());
 
-/** Persist the Cursor API key (trimmed). */
+/** Persist the Cursor API key (trimmed).
+ * @param key - Cursor API key to store.
+ * @returns A promise that resolves after the key is stored.
+ */
 export const writeApiKey = (key: string): Promise<void> => {
   const trimmed = key.trim();
   if (!trimmed) {
@@ -83,13 +88,18 @@ export const writeApiKey = (key: string): Promise<void> => {
   return Promise.resolve();
 };
 
-/** Remove the stored API key. */
+/** Remove the stored API key.
+ * @returns A promise that resolves after the key is removed.
+ */
 export const deleteApiKey = (): Promise<void> => {
   deleteFile();
   return Promise.resolve();
 };
 
-/** Mask a key for display (`crsr_…xxxx`). */
+/** Mask a key for display (`crsr_…xxxx`).
+ * @param key - API key to mask.
+ * @returns A shortened representation, or a not-set marker.
+ */
 export const maskApiKey = (key: string): string => {
   const trimmed = key.trim();
   if (!trimmed) {

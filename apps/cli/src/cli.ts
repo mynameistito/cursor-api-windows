@@ -124,9 +124,10 @@ const buildProgram = (): Command => {
         const update = await checkForUpdate();
         recordUpdateCheck(update);
         if (update.latest) {
-          console.log(
-            `update:    ${update.updateAvailable ? `available (${update.current} -> ${update.latest.version})` : "up to date"}`
-          );
+          const updateStatus = update.updateAvailable
+            ? `available (${update.current} -> ${update.latest.version})`
+            : "up to date";
+          console.log(`update:    ${updateStatus}`);
         }
       } catch {
         console.log("update:    (could not reach GitHub)");
@@ -150,7 +151,7 @@ const buildProgram = (): Command => {
         await followLogs("all");
         return;
       }
-      const lines = Number.parseInt(opts.lines, 10) || 80;
+      const lines = Math.trunc(Number(opts.lines)) || 80;
       for (const line of readRecentLogs("all", lines)) {
         console.log(line);
       }
@@ -185,7 +186,7 @@ const buildProgram = (): Command => {
     .command("set <port>")
     .description(`Set the HTTP port (default ${DEFAULT_PORT})`)
     .action((value: string) => {
-      const parsed = Number.parseInt(value, 10);
+      const parsed = Math.trunc(Number(value));
       if (!Number.isInteger(parsed) || parsed <= 0 || parsed >= 65_536) {
         console.error("Port must be an integer between 1 and 65535.");
         process.exit(1);
