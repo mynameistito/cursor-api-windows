@@ -22,16 +22,22 @@ import path from "node:path";
 
 /** Minimal package manifest fields needed by the non-interactive changeset tool. */
 interface PackageJson {
-  dependencies?: Record<string, unknown>;
-  devDependencies?: Record<string, unknown>;
-  name?: unknown;
-  optionalDependencies?: Record<string, unknown>;
-  peerDependencies?: Record<string, unknown>;
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
+  name?: string;
+  optionalDependencies?: Record<string, string>;
+  peerDependencies?: Record<string, string>;
 }
 
 type ChangesetType = "patch" | "minor" | "major";
 type PackageTarget = "cli" | "web";
 type PackageTargetArg = PackageTarget | "both";
+
+interface ResolvedTargets {
+  summary: string;
+  targets: PackageTarget[];
+  type: ChangesetType;
+}
 
 const changesetTypes = ["patch", "minor", "major"] as const;
 const packageTargets = ["cli", "web", "both"] as const;
@@ -41,26 +47,28 @@ const packageManifestPaths: Record<PackageTarget, string> = {
   web: "apps/web/package.json",
 };
 
+const CHANGESET_DIRECTORY = ".changeset";
+
 const isChangesetType = (type: string | undefined): type is ChangesetType =>
-  changesetTypes.includes(type as ChangesetType);
+  changesetTypes.some((candidate) => candidate === type);
 
 const isPackageTarget = (
   value: string | undefined
 ): value is PackageTargetArg =>
-  packageTargets.includes(value as PackageTargetArg);
+  packageTargets.some((candidate) => candidate === value);
 
 const findMonorepoRoot = (startDir: string) => {
   let currentDir = startDir;
 
   while (currentDir !== path.dirname(currentDir)) {
-    if (existsSync(path.join(currentDir, ".changeset"))) {
+    if (existsSync(path.join(currentDir, CHANGESET_DIRECTORY))) {
       return currentDir;
     }
 
     currentDir = path.dirname(currentDir);
   }
 
-  if (existsSync(path.join(currentDir, ".changeset"))) {
+  if (existsSync(path.join(currentDir, CHANGESET_DIRECTORY))) {
     return currentDir;
   }
 
@@ -72,7 +80,10 @@ const findMonorepoRoot = (startDir: string) => {
 
 const readPackageJson = (packageJsonPath: string) => {
   try {
-    return JSON.parse(readFileSync(packageJsonPath, "utf-8")) as PackageJson;
+    const packageJson: PackageJson = JSON.parse(
+      readFileSync(packageJsonPath, "utf-8")
+    );
+    return packageJson;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error(`Failed to read package.json: ${message}`);
@@ -81,7 +92,7 @@ const readPackageJson = (packageJsonPath: string) => {
 };
 
 const getPackageName = (packageJson: PackageJson) => {
-  if (typeof packageJson.name !== "string" || !packageJson.name.trim()) {
+  if (!packageJson.name?.trim()) {
     console.error("package.json must include a non-empty name field");
     process.exit(1);
   }
@@ -143,9 +154,7 @@ const createChangesetFilename = (changesetDir: string) => {
   process.exit(1);
 };
 
-const resolveTargets = (
-  args: string[]
-): { targets: PackageTarget[]; type: ChangesetType; summary: string } => {
+const resolveTargets = (args: string[]): ResolvedTargets => {
   if (args.length < 2) {
     console.error("Usage: changeset-add.ts [cli|web|both] <type> <summary>");
     console.error("  package: cli (default) | web | both");

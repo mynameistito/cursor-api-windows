@@ -34,19 +34,51 @@ interface GitHubRelease {
   upload_url: string;
 }
 
+interface ReleaseTagOptions {
+  published?: boolean;
+}
+
+const isGitHubReleaseAsset = (value: unknown): value is GitHubReleaseAsset => {
+  if (value === null || typeof value !== "object") {
+    return false;
+  }
+  if (!("id" in value) || typeof value.id !== "number") {
+    return false;
+  }
+  return "name" in value && typeof value.name === "string";
+};
+
+const isGitHubRelease = (value: unknown): value is GitHubRelease => {
+  if (value === null || typeof value !== "object") {
+    return false;
+  }
+  if (!("id" in value) || typeof value.id !== "number") {
+    return false;
+  }
+  if (!("upload_url" in value) || typeof value.upload_url !== "string") {
+    return false;
+  }
+  return (
+    "assets" in value &&
+    Array.isArray(value.assets) &&
+    value.assets.every(isGitHubReleaseAsset)
+  );
+};
+
 const packageRoot = path.join(import.meta.dirname, "..");
 const monorepoRoot = path.join(packageRoot, "..", "..");
 const bundleDir = path.join(packageRoot, "dist", "cursor-api");
 const distDir = path.join(packageRoot, "dist");
 
-const resolveReleaseTag = (published?: boolean): string => {
+const isPublishedEnvironment = (): boolean =>
+  process.env.PUBLISHED === "true" ||
+  process.env.PUBLISHED === "1" ||
+  process.env.GITHUB_EVENT_NAME === "workflow_dispatch";
+
+const resolveReleaseTag = (options: ReleaseTagOptions = {}): string => {
   const githubRef = process.env.GITHUB_REF ?? "";
   const githubRefName = process.env.GITHUB_REF_NAME ?? "";
-  const isPublished =
-    published ??
-    (process.env.PUBLISHED === "true" ||
-      process.env.PUBLISHED === "1" ||
-      process.env.GITHUB_EVENT_NAME === "workflow_dispatch");
+  const isPublished = options.published ?? isPublishedEnvironment();
 
   if (githubRef.startsWith("refs/tags/v")) {
     return githubRefName;
@@ -62,8 +94,8 @@ const resolveReleaseTag = (published?: boolean): string => {
 const releaseVersionFromTag = (tag: string): string =>
   tag.replace(/^v/u, "") || "0.0.0-dev";
 
-const writeReleaseTagOutput = (published?: boolean): string => {
-  const tag = resolveReleaseTag(published);
+const writeReleaseTagOutput = (options: ReleaseTagOptions = {}): string => {
+  const tag = resolveReleaseTag(options);
   const outputPath = process.env.GITHUB_OUTPUT;
 
   if (outputPath) {
@@ -139,7 +171,11 @@ const buildGitHubClient = (token: string, repository: string) => {
       );
     }
 
-    return (await response.json()) as GitHubRelease;
+    const release: unknown = await response.json();
+    if (!isGitHubRelease(release)) {
+      throw new Error(`GET release ${releaseTag} returned an invalid response`);
+    }
+    return release;
   };
 
   const createRelease = async (
@@ -158,7 +194,13 @@ const buildGitHubClient = (token: string, repository: string) => {
       method: "POST",
     });
 
-    return (await response.json()) as GitHubRelease;
+    const release: unknown = await response.json();
+    if (!isGitHubRelease(release)) {
+      throw new Error(
+        `POST release ${releaseTag} returned an invalid response`
+      );
+    }
+    return release;
   };
 
   const updateReleaseNotes = async (
@@ -202,10 +244,12 @@ const buildGitHubClient = (token: string, repository: string) => {
     }
 
     const body = readFileSync(filePath);
-    const uploadUrl = release.upload_url.replace(
-      /\{.*\}$/u,
-      `?name=${encodeURIComponent(name)}`
-    );
+    const placeholderIndex = release.upload_url.indexOf("{");
+    const baseUploadUrl =
+      placeholderIndex === -1
+        ? release.upload_url
+        : release.upload_url.slice(0, placeholderIndex);
+    const uploadUrl = `${baseUploadUrl}?name=${encodeURIComponent(name)}`;
 
     await request(uploadUrl, {
       body,
@@ -437,7 +481,7 @@ program
       throw new Error("GITHUB_OUTPUT is not set");
     }
 
-    writeReleaseTagOutput(options.published);
+    writeReleaseTagOutput({ published: options.published });
   });
 
 program

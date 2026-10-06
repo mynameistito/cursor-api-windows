@@ -11,14 +11,14 @@ import { installRoot } from "./paths";
 import { GITHUB_REPO, VERSION } from "./version";
 
 const execFileAsync = promisify(execFile);
-
-interface ReleaseInfo {
-  version: string;
-  tag: string;
-  downloadUrl: string;
-  publishedAt: string;
-  releaseNotes: string;
-}
+const POWERSHELL_EXECUTABLE = path.join(
+  process.env.SystemRoot ?? "C:\\Windows",
+  "System32",
+  "WindowsPowerShell",
+  "v1.0",
+  "powershell.exe"
+);
+const EXECUTABLE_FILENAME = "cursor-api.exe";
 
 interface GitHubReleaseAsset {
   name: string;
@@ -28,16 +28,86 @@ interface GitHubReleaseAsset {
 interface GitHubRelease {
   tag_name: string;
   published_at: string;
-  body: string;
+  body: string | null;
   assets: GitHubReleaseAsset[];
+}
+
+const parseGitHubRelease = (json: string): GitHubRelease | null => {
+  const value: unknown = JSON.parse(json);
+  if (!(value instanceof Object) || Array.isArray(value)) {
+    return null;
+  }
+  if (!("tag_name" in value) || !("published_at" in value)) {
+    return null;
+  }
+  if (!("body" in value) || !("assets" in value)) {
+    return null;
+  }
+  if (
+    JSON.stringify(value.tag_name) !== JSON.stringify(String(value.tag_name)) ||
+    JSON.stringify(value.published_at) !==
+      JSON.stringify(String(value.published_at))
+  ) {
+    return null;
+  }
+  if (
+    !(
+      value.body === null ||
+      JSON.stringify(value.body) === JSON.stringify(String(value.body))
+    ) ||
+    !Array.isArray(value.assets)
+  ) {
+    return null;
+  }
+
+  const assets: GitHubReleaseAsset[] = [];
+  for (const asset of value.assets) {
+    if (!(asset instanceof Object) || Array.isArray(asset)) {
+      return null;
+    }
+    if (!("name" in asset) || !("browser_download_url" in asset)) {
+      return null;
+    }
+    if (
+      JSON.stringify(asset.name) !== JSON.stringify(String(asset.name)) ||
+      JSON.stringify(asset.browser_download_url) !==
+        JSON.stringify(String(asset.browser_download_url))
+    ) {
+      return null;
+    }
+    assets.push({
+      browser_download_url: String(asset.browser_download_url),
+      name: String(asset.name),
+    });
+  }
+
+  return {
+    assets,
+    body: value.body === null ? null : String(value.body),
+    published_at: String(value.published_at),
+    tag_name: String(value.tag_name),
+  };
+};
+
+interface ReleaseInfo {
+  version: string;
+  tag: string;
+  downloadUrl: string;
+  publishedAt: string;
+  releaseNotes: string;
 }
 
 const parseSemver = (value: string): number[] =>
   value
     .replace(/^v/u, "")
     .split(".")
-    .map((part) => Number.parseInt(part, 10) || 0);
+    .map((part) => Math.trunc(Number(part)) || 0);
 
+/** Compare two numeric semantic-version components.
+ * @param a - First version to compare.
+ * @param b - Second version to compare.
+ * @returns A positive number when `a` is newer, a negative number when older, or zero when equal.
+ */
 export const compareSemver = function compareSemver(
   a: string,
   b: string
@@ -71,7 +141,10 @@ const fetchLatestRelease =
     if (!res.ok) {
       throw new Error(`GitHub API error: ${res.status} ${res.statusText}`);
     }
-    const data = (await res.json()) as GitHubRelease;
+    const data = parseGitHubRelease(await res.text());
+    if (!data) {
+      throw new Error("GitHub API returned an invalid release response.");
+    }
     const tag = data.tag_name.replace(/^v/u, "");
     const asset = data.assets.find((item) =>
       /^cursor-api-.*-win-x64\.zip$/iu.test(item.name)
@@ -91,14 +164,11 @@ const fetchLatestRelease =
 const runPowerShell = async function runPowerShell(
   script: string
 ): Promise<string> {
-  const { stdout, stderr } = await execFileAsync(
-    "powershell",
+  const { stdout } = await execFileAsync(
+    POWERSHELL_EXECUTABLE,
     ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
     { maxBuffer: 10 * 1024 * 1024, windowsHide: true }
   );
-  if (stderr?.trim()) {
-    // PowerShell writes informational output to stderr; only fail on thrown errors.
-  }
   return stdout;
 };
 
@@ -148,7 +218,7 @@ const copyBundleExceptExe = async function copyBundleExceptExe(
   mkdirSync(targetDir, { recursive: true });
   const script = `
 $ProgressPreference = 'SilentlyContinue'
-Get-ChildItem -LiteralPath '${psQuote(sourceDir)}' | Where-Object { $_.Name -ne 'cursor-api.exe' } | ForEach-Object {
+Get-ChildItem -LiteralPath '${psQuote(sourceDir)}' | Where-Object { $_.Name -ne '${EXECUTABLE_FILENAME}' } | ForEach-Object {
   Copy-Item -LiteralPath $_.FullName -Destination '${psQuote(targetDir)}' -Recurse -Force
 }
 `.trim();
@@ -161,11 +231,15 @@ const stageNewExecutable = async function stageNewExecutable(
 ): Promise<void> {
   const script = `
 $ProgressPreference = 'SilentlyContinue'
-Copy-Item -LiteralPath '${psQuote(path.join(sourceDir, "cursor-api.exe"))}' -Destination '${psQuote(path.join(targetDir, "cursor-api.exe.new"))}' -Force
+  Copy-Item -LiteralPath '${psQuote(path.join(sourceDir, EXECUTABLE_FILENAME))}' -Destination '${psQuote(path.join(targetDir, `${EXECUTABLE_FILENAME}.new`))}' -Force
 `.trim();
   await runPowerShell(script);
 };
 
+/** Build the PowerShell script that completes a self-update after process exit.
+ * @param options - Process, installation, and restart details for the update.
+ * @returns The PowerShell update script.
+ */
 export const buildFinishSelfUpdateScript =
   function buildFinishSelfUpdateScript(options: {
     parentPid: number;
@@ -173,8 +247,11 @@ export const buildFinishSelfUpdateScript =
     wasRunning: boolean;
     workDir: string;
   }): string {
-    const installedExe = path.join(options.targetDir, "cursor-api.exe");
-    const stagedExe = path.join(options.targetDir, "cursor-api.exe.new");
+    const installedExe = path.join(options.targetDir, EXECUTABLE_FILENAME);
+    const stagedExe = path.join(
+      options.targetDir,
+      `${EXECUTABLE_FILENAME}.new`
+    );
     const zipPath = path.join(options.workDir, "bundle.zip");
     const extractDir = path.join(options.workDir, "extract");
     const restart = options.wasRunning
@@ -230,10 +307,14 @@ try {
 `.trim();
   };
 
+/** Check whether this process is running from the installed executable.
+ * @param targetDir - Installation directory to compare with the current executable.
+ * @returns Whether the current process is the installed binary.
+ */
 export const isUpdatingInstalledBinary = function isUpdatingInstalledBinary(
   targetDir: string
 ): boolean {
-  const installedExe = path.join(targetDir, "cursor-api.exe");
+  const installedExe = path.join(targetDir, EXECUTABLE_FILENAME);
   if (!existsSync(installedExe)) {
     return false;
   }
@@ -256,13 +337,16 @@ const finishSelfUpdateInBackground =
     writeFileSync(scriptPath, `${script}\n`, "utf-8");
     appendLog("daemon", `self-update finisher staged at ${scriptPath}`);
     const child = spawn(
-      "powershell",
+      POWERSHELL_EXECUTABLE,
       ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath],
       { detached: true, stdio: "ignore", windowsHide: true }
     );
     child.unref();
   };
 
+/** Check GitHub for a release newer than the current version.
+ * @returns Current version, latest release if available, and update availability.
+ */
 export const checkForUpdate = async function checkForUpdate(): Promise<{
   current: string;
   latest: ReleaseInfo | null;
@@ -279,6 +363,9 @@ export const checkForUpdate = async function checkForUpdate(): Promise<{
   };
 };
 
+/** Download and install the latest release, optionally reinstalling the current version.
+ * @param options - Update controls, including whether to force a reinstall.
+ */
 export const runUpdate = async function runUpdate(
   options: {
     force?: boolean;
@@ -345,6 +432,9 @@ export const runUpdate = async function runUpdate(
   }
 };
 
+/** Persist the result of an update check.
+ * @param result - Current and latest release information from the check.
+ */
 export const recordUpdateCheck = function recordUpdateCheck(
   result: Awaited<ReturnType<typeof checkForUpdate>>
 ): void {
