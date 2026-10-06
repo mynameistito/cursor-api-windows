@@ -84,12 +84,12 @@ const clientRows = [
 const agentSetupRows = [
   {
     description:
-      "Use the bundled configurator. It writes the local OpenAI-compatible provider into OpenCode so future sessions can select the Composer model directly.",
+      "Use the bundled configurator to add the local OpenAI-compatible provider to OpenCode, so future sessions can select a Composer model.",
     name: "OpenCode",
     notes: [
-      "Run the command after the daemon is started at least once.",
+      "The daemon does not need to be running to write the OpenCode config.",
       "Re-run it any time you change the daemon port.",
-      "Keep the generated provider pointed at /v1; do not remove that suffix.",
+      "The configurator backs up an existing config before changing it.",
     ],
     settings: [
       ["Provider", "OpenAI-compatible local provider"],
@@ -98,8 +98,8 @@ const agentSetupRows = [
       ["Models", `${primaryModel}, ${fastModel}`],
     ],
     steps: [
-      ["Start the daemon", startCommand],
       ["Write OpenCode config", "cursor-api configure agent opencode"],
+      ["Start the daemon", startCommand],
       ["Check the endpoint", healthCommand],
       [
         "Use the model",
@@ -138,7 +138,7 @@ const agentSetupRows = [
   },
   {
     description:
-      "Point Pi at the localhost OpenAI-compatible endpoint and keep the fast Composer model as the default for interactive coding sessions.",
+      "If your Pi setup supports a custom OpenAI-compatible provider, point it at the localhost endpoint and choose a Composer model.",
     name: "Pi",
     notes: [
       "Pi should target the local daemon, not the public OpenAI API.",
@@ -164,7 +164,7 @@ const agentSetupRows = [
   },
   {
     description:
-      "Create a Kilo Code provider profile that routes OpenAI-compatible chat requests through the local daemon.",
+      "If your Kilo Code setup supports a custom OpenAI-compatible provider, use these values to route chat requests through the local daemon.",
     name: "Kilo Code",
     notes: [
       "Keep streaming enabled if Kilo Code offers a streaming toggle.",
@@ -191,7 +191,7 @@ const agentSetupRows = [
   },
   {
     description:
-      "Save Aider defaults so each run uses the local daemon without repeating base URL and model flags.",
+      "Configure Aider's OpenAI-compatible connection with these values. The exact persistence method depends on how you run Aider.",
     name: "Aider",
     notes: [
       "Aider expects OpenAI-compatible names for the base URL and key.",
@@ -245,6 +245,10 @@ const lifecycleRows = [
   ["Runtime layout", "cursor-api.exe plus a bundled bridge directory"],
   ["Server process", "Background daemon with PID state under AppData"],
   ["Bridge process", "Node runtime for local @cursor/sdk calls"],
+  [
+    "Fallback",
+    "Direct path may run without the SDK bridge, with different capabilities",
+  ],
   ["Updates", "Stop daemon, replace release files, preserve AppData config"],
 ] as const;
 
@@ -311,6 +315,7 @@ const rightRailLinks = [
   ["Install", "#quick-start"],
   ["Configure agents", "#agent-setup"],
   ["Send requests", "#requests"],
+  ["Security and limits", "#security"],
   ["Debug", "#troubleshooting"],
 ] as const;
 
@@ -414,6 +419,12 @@ const AvailablePill = () => (
   </span>
 );
 
+const AgentSetupPill = ({ name }: { name: string }) => (
+  <span className="border-border text-muted-foreground bg-muted inline-flex items-center rounded-md border px-2 py-1 text-xs font-medium">
+    {name === "OpenCode" ? "CLI configurator" : "Manual setup guide"}
+  </span>
+);
+
 const AgentSetupCard = ({
   description,
   name,
@@ -431,14 +442,14 @@ const AgentSetupCard = ({
           {description}
         </p>
       </div>
-      <AvailablePill />
+      <AgentSetupPill name={name} />
     </div>
 
     <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_16rem]">
       <div className="min-w-0 space-y-7">
         <div>
           <h4 className="text-foreground mb-3 text-base font-semibold tracking-tight">
-            Required settings
+            Provider values
           </h4>
           <div className="border-border overflow-hidden rounded-lg border">
             {settings.map(([label, value]) => (
@@ -459,7 +470,7 @@ const AgentSetupCard = ({
 
         <div>
           <h4 className="text-foreground mb-3 text-base font-semibold tracking-tight">
-            Setup steps
+            Suggested setup
           </h4>
           <ol className="m-0 space-y-4 p-0">
             {steps.map(([label, value], index) => (
@@ -703,6 +714,19 @@ const Docs = () => (
             <Detail key={label} label={label} value={value} />
           ))}
         </div>
+        <div className="text-muted-foreground border-border bg-muted mt-5 rounded-lg border p-4 text-sm leading-7">
+          <p className="text-foreground mb-2 font-medium">
+            Use these values in your client
+          </p>
+          <p className="m-0">
+            Keep <code>/v1</code> at the end of the base URL. Enter{" "}
+            <code>cursor-local</code> as the client API key when a key is
+            required; it is a local placeholder, not your Cursor API key. Save
+            the actual Cursor key separately with{" "}
+            <code>cursor-api key set</code>. The daemon listens only on this
+            computer at <code>127.0.0.1</code>.
+          </p>
+        </div>
       </section>
 
       <section className="border-border border-b py-8" id="quick-start">
@@ -723,7 +747,7 @@ const Docs = () => (
 
       <section className="border-border border-b py-8" id="agent-setup">
         <SectionHeading
-          description="Each setup below includes the fields to save, the order to configure them, and the checks to run when a client hides connection errors."
+          description="Use these provider values as a starting point. Client settings and menu names vary by product and version."
           title="Agent setup"
         />
         <div className="text-muted-foreground border-border bg-muted mb-5 rounded-lg border p-4 text-sm leading-6">
@@ -733,8 +757,10 @@ const Docs = () => (
           <p className="mt-2 mb-0">
             The bundled <code>cursor-api configure agent</code> command
             currently writes OpenCode configuration only. The Codex, Pi, Kilo
-            Code, Aider, and VS Code instructions below are manual provider
-            setup guidance; those clients are not configured by the CLI command.
+            Code, Aider, and VS Code entries below are manual setup guides, not
+            verified integrations. Those clients are not configured by the CLI
+            command. <code>cursor-api configure list</code> reports CLI
+            configurator status, not whether manual setup works.
           </p>
         </div>
         <div className="grid gap-5">
@@ -796,7 +822,7 @@ Content-Type: application/json
 
       <section className="border-border border-b py-8" id="api-surface">
         <SectionHeading
-          description="The daemon binds to loopback and exposes only the local /v1 surface."
+          description="The daemon binds to loopback and exposes a local health check plus the versioned /v1 API."
           title="API surface"
         />
         <div className="space-y-3">
@@ -836,6 +862,12 @@ Content-Type: application/json
             Anthropic-compatible requests currently use{" "}
             <code>composer-2.5</code>
             regardless of the model name in the request.
+          </p>
+          <Separator />
+          <p>
+            These endpoints implement a subset of the upstream APIs. See the
+            Security and compatibility limits section for unsupported options,
+            payload limits, and state-retention behavior.
           </p>
         </div>
       </section>
