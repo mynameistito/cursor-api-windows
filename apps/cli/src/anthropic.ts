@@ -1,5 +1,5 @@
 /**
- * Anthropic Messages API <-> OpenAI/Cursor adapter (sidecar-local, pure translation).
+ * Anthropic Messages API to OpenAI/Cursor adapter (sidecar-local, pure translation).
  *
  * Lets Claude Code (CLI) use Cursor's Composer via ANTHROPIC_BASE_URL: we convert an
  * Anthropic `/v1/messages` request into the OpenAI-shaped body that `worker/openai.ts`
@@ -10,76 +10,139 @@
  * See docs/superpowers/specs/2026-06-02-anthropic-endpoint-claude-code-design.md.
  */
 import type { CursorTextEvent } from "@/api/cursor";
-import type { CursorToolCall } from "@/api/types";
+import type { CursorToolCall, JsonValue } from "@/api/types";
 
 const PRIMARY_MODEL = "composer-2.5";
 
-type Block = Record<string, unknown>;
-
-interface Msg {
-  role?: string;
-  content?: unknown;
+interface JsonObject {
+  [key: string]: JsonValue;
 }
 
-const asArray = function asArray<T = unknown>(v: unknown): T[] {
-  return Array.isArray(v) ? (v as T[]) : [];
+interface AnthropicErrorResponse {
+  type: "error";
+  error: { type: string; message: string };
+}
+
+interface AnthropicToolUseBlock {
+  id: string;
+  input: JsonObject;
+  name: string;
+  type: "tool_use";
+}
+
+interface AnthropicMessageResponse {
+  content: (JsonObject | AnthropicToolUseBlock)[];
+  id: string;
+  model: string;
+  role: "assistant";
+  stop_reason: "tool_use" | "end_turn";
+  stop_sequence: null;
+  type: "message";
+  usage: { input_tokens: number; output_tokens: number };
+}
+
+const asArray = function asArray(v: JsonValue | undefined): JsonValue[] {
+  return Array.isArray(v) ? v : [];
 };
 
-const isRecord = function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
+const isRecord = function isRecord(v: JsonValue | undefined): v is JsonObject {
+  return (
+    v !== undefined &&
+    v !== null &&
+    !Array.isArray(v) &&
+    Object.getPrototypeOf(new Object(v)) === Object.prototype
+  );
 };
 
-export const mapModel = function mapModel(_model: unknown): string {
+const isString = (value: JsonValue | undefined): value is string =>
+  value !== undefined &&
+  Object.prototype.toString.call(value) === "[object String]";
+
+type OpenAIToolChoice =
+  | "required"
+  | "none"
+  | { function: { name: string }; type: "function" };
+
+/** Map an incoming model name to the configured Composer model.
+ * @param _model - Requested model name, currently ignored.
+ * @returns The Composer model used by the adapter.
+ */
+export const mapModel = function mapModel(_model: string): string {
   return PRIMARY_MODEL;
 };
 
+/** Estimate token usage from a character count.
+ * @param chars - Number of input or output characters.
+ * @returns Estimated token count, with a minimum of one.
+ */
 export const estimateTokens = function estimateTokens(chars: number): number {
   return Math.max(1, Math.ceil(chars / 4));
 };
 
+/** Build an Anthropic-compatible error response.
+ * @param message - Human-readable error message.
+ * @param type - Anthropic error type.
+ * @returns The error response body.
+ */
 export const anthropicError = function anthropicError(
   message: string,
   type = "api_error"
-): {
-  type: "error";
-  error: {
-    type: string;
-    message: string;
-  };
-} {
+): AnthropicErrorResponse {
   return { error: { message, type }, type: "error" };
 };
 
+const flattenContentBlock = (block: JsonValue): string => {
+  if (isString(block)) {
+    return block;
+  }
+  if (!isRecord(block)) {
+    return "";
+  }
+  if (block.type === "text" && isString(block.text)) {
+    return block.text;
+  }
+  if (block.type === "image") {
+    return "[image]";
+  }
+  return isString(block.text) ? block.text : JSON.stringify(block);
+};
+
 const flattenToolResultContent = function flattenToolResultContent(
-  content: unknown,
+  content: JsonValue | undefined,
   isError = false
 ): string {
-  let text: string;
-  if (typeof content === "string") {
+  let text = "";
+  if (isString(content)) {
     text = content;
   } else if (Array.isArray(content)) {
-    text = content
-      .map((b) => {
-        if (!isRecord(b)) {
-          return typeof b === "string" ? b : "";
-        }
-        if (b.type === "text" && typeof b.text === "string") {
-          return b.text;
-        }
-        if (b.type === "image") {
-          return "[image]";
-        }
-        return typeof b.text === "string" ? b.text : JSON.stringify(b);
-      })
-      .filter(Boolean)
-      .join("\n");
-  } else {
-    text = content === null || content === undefined ? "" : String(content);
+    const textParts: string[] = [];
+    for (const block of content) {
+      const part = flattenContentBlock(block);
+      if (part) {
+        textParts.push(part);
+      }
+    }
+    text = textParts.join("\n");
+  } else if (content !== null && content !== undefined) {
+    text = String(content);
   }
   return isError ? `[tool error] ${text}` : text;
 };
 
-const mapToolChoice = function mapToolChoice(tc: unknown): unknown {
+const parseToolArguments = (args: CursorToolCall["arguments"]): JsonObject => {
+  const parsed: JsonObject = {};
+  for (const [key, value] of Object.entries(args)) {
+    const encoded = JSON.stringify(value);
+    if (encoded !== undefined) {
+      parsed[key] = JSON.parse(encoded);
+    }
+  }
+  return parsed;
+};
+
+const mapToolChoice = function mapToolChoice(
+  tc: JsonValue | undefined
+): OpenAIToolChoice | undefined {
   if (!isRecord(tc)) {
     return undefined;
   }
@@ -94,7 +157,7 @@ const mapToolChoice = function mapToolChoice(tc: unknown): unknown {
       return "none";
     }
     case "tool": {
-      return typeof tc.name === "string"
+      return isString(tc.name)
         ? { function: { name: tc.name }, type: "function" }
         : undefined;
     }
@@ -105,72 +168,73 @@ const mapToolChoice = function mapToolChoice(tc: unknown): unknown {
 };
 
 const imagePartFromBlock = function imagePartFromBlock(
-  block: Block
-): Record<string, unknown> | null {
+  block: JsonObject
+): JsonObject | null {
   const source = isRecord(block.source) ? block.source : null;
-  if (source && source.type === "base64" && typeof source.data === "string") {
-    const mediaType =
-      typeof source.media_type === "string" ? source.media_type : "image/png";
+  if (source && source.type === "base64" && isString(source.data)) {
+    const mediaType = isString(source.media_type)
+      ? source.media_type
+      : "image/png";
     return {
       image_url: { url: `data:${mediaType};base64,${source.data}` },
       type: "image_url",
     };
   }
   // url / file sources are best-effort: surface as text so we never crash.
-  if (source && source.type === "url" && typeof source.url === "string") {
+  if (source && source.type === "url" && isString(source.url)) {
     return { image_url: { url: source.url }, type: "image_url" };
   }
   return null;
 };
 
 const appendSystemMessages = (
-  record: Record<string, unknown>,
-  messages: Record<string, unknown>[]
+  record: JsonObject,
+  messages: JsonObject[]
 ): void => {
   const { system } = record;
-  if (typeof system === "string" && system.trim()) {
+  if (isString(system) && system.trim()) {
     messages.push({ content: system, role: "system" });
     return;
   }
   if (!Array.isArray(system)) {
     return;
   }
-  const text = system
-    .map((block) =>
-      isRecord(block) && typeof block.text === "string" ? block.text : ""
-    )
-    .filter(Boolean)
-    .join("\n");
+  const textParts: string[] = [];
+  for (const block of system) {
+    if (isRecord(block) && isString(block.text) && block.text) {
+      textParts.push(block.text);
+    }
+  }
+  const text = textParts.join("\n");
   if (text) {
     messages.push({ content: text, role: "system" });
   }
 };
 
 const appendAssistantMessage = (
-  blocks: Block[],
-  messages: Record<string, unknown>[]
+  blocks: JsonValue[],
+  messages: JsonObject[]
 ): void => {
-  const parts: Record<string, unknown>[] = [];
-  const toolCalls: Record<string, unknown>[] = [];
+  const parts: JsonObject[] = [];
+  const toolCalls: JsonObject[] = [];
   for (const block of blocks) {
     if (!isRecord(block)) {
       continue;
     }
-    if (block.type === "text" && typeof block.text === "string") {
+    if (block.type === "text" && isString(block.text)) {
       parts.push({ text: block.text, type: "text" });
     } else if (block.type === "tool_use") {
       toolCalls.push({
         function: {
           arguments: JSON.stringify(block.input ?? {}),
-          name: typeof block.name === "string" ? block.name : "",
+          name: isString(block.name) ? block.name : "",
         },
-        id:
-          typeof block.id === "string" ? block.id : `toolu_${toolCalls.length}`,
+        id: isString(block.id) ? block.id : `toolu_${toolCalls.length}`,
         type: "function",
       });
     }
   }
-  const assistant: Record<string, unknown> = {
+  const assistant: JsonObject = {
     content: parts.length ? parts : null,
     role: "assistant",
   };
@@ -181,10 +245,10 @@ const appendAssistantMessage = (
 };
 
 const appendUserMessage = (
-  blocks: Block[],
-  messages: Record<string, unknown>[]
+  blocks: JsonValue[],
+  messages: JsonObject[]
 ): void => {
-  const userParts: Record<string, unknown>[] = [];
+  const userParts: JsonObject[] = [];
   for (const block of blocks) {
     if (!isRecord(block)) {
       continue;
@@ -196,10 +260,9 @@ const appendUserMessage = (
           block.is_error === true
         ),
         role: "tool",
-        tool_call_id:
-          typeof block.tool_use_id === "string" ? block.tool_use_id : "",
+        tool_call_id: isString(block.tool_use_id) ? block.tool_use_id : "",
       });
-    } else if (block.type === "text" && typeof block.text === "string") {
+    } else if (block.type === "text" && isString(block.text)) {
       userParts.push({ text: block.text, type: "text" });
     } else if (block.type === "image") {
       const img = imagePartFromBlock(block);
@@ -214,49 +277,64 @@ const appendUserMessage = (
 };
 
 const appendAnthropicMessages = (
-  record: Record<string, unknown>,
-  messages: Record<string, unknown>[]
+  record: JsonObject,
+  messages: JsonObject[]
 ): void => {
-  for (const raw of asArray<Msg>(record.messages)) {
-    const role = raw?.role === "assistant" ? "assistant" : "user";
-    const content = raw?.content;
-    if (typeof content === "string") {
+  for (const value of asArray(record.messages)) {
+    if (!isRecord(value)) {
+      continue;
+    }
+    const { role: inputRole, content } = value;
+    const role = inputRole === "assistant" ? "assistant" : "user";
+    if (isString(content)) {
       messages.push({ content, role });
-      continue;
+    } else {
+      const blocks = asArray(content);
+      if (role === "assistant") {
+        appendAssistantMessage(blocks, messages);
+      } else {
+        appendUserMessage(blocks, messages);
+      }
     }
-    const blocks = asArray<Block>(content);
-    if (role === "assistant") {
-      appendAssistantMessage(blocks, messages);
-      continue;
-    }
-    appendUserMessage(blocks, messages);
   }
 };
 
+/** Convert an Anthropic Messages request into the chat-completions shape.
+ * @param body - Parsed Anthropic request body.
+ * @returns The corresponding OpenAI-compatible request body.
+ */
 export const anthropicToChatBody = function anthropicToChatBody(
-  body: unknown
-): Record<string, unknown> {
+  body: JsonValue
+): JsonObject {
   const record = isRecord(body) ? body : {};
-  const out: Record<string, unknown> = {
+  const out: JsonObject = {
     model: PRIMARY_MODEL,
     stream: record.stream === true,
   };
-  const messages: Record<string, unknown>[] = [];
+  const messages: JsonObject[] = [];
   appendSystemMessages(record, messages);
   appendAnthropicMessages(record, messages);
   out.messages = messages;
-  const tools = asArray<Block>(record.tools)
-    .filter(isRecord)
-    .map((t) => ({
+  const tools: JsonObject[] = [];
+  for (const candidate of asArray(record.tools)) {
+    if (!isRecord(candidate)) {
+      continue;
+    }
+    const tool: JsonObject = {
       function: {
-        name: typeof t.name === "string" ? t.name : "",
-        ...(typeof t.description === "string"
-          ? { description: t.description }
-          : {}),
-        parameters: t.input_schema ?? { properties: {}, type: "object" },
+        name: isString(candidate.name) ? candidate.name : "",
+        parameters: candidate.input_schema ?? {
+          properties: {},
+          type: "object",
+        },
       },
       type: "function",
-    }));
+    };
+    if (isString(candidate.description) && isRecord(tool.function)) {
+      tool.function.description = candidate.description;
+    }
+    tools.push(tool);
+  }
   if (tools.length) {
     out.tools = tools;
   }
@@ -269,15 +347,20 @@ export const anthropicToChatBody = function anthropicToChatBody(
 
 const toolUseBlock = function toolUseBlock(
   toolCall: CursorToolCall
-): Record<string, unknown> {
+): AnthropicToolUseBlock {
+  const input = parseToolArguments(toolCall.arguments);
   return {
     id: `toolu_${crypto.randomUUID().replaceAll("-", "")}`,
-    input: isRecord(toolCall.arguments) ? toolCall.arguments : {},
+    input,
     name: toolCall.name,
     type: "tool_use",
   };
 };
 
+/** Build a non-streaming Anthropic assistant message.
+ * @param opts - Message identity, model, generated content, and usage counts.
+ * @returns The Anthropic message response.
+ */
 export const anthropicMessage = function anthropicMessage(opts: {
   id: string;
   model: string;
@@ -285,8 +368,8 @@ export const anthropicMessage = function anthropicMessage(opts: {
   toolCalls: CursorToolCall[];
   inputTokens: number;
   outputTokens: number;
-}): Record<string, unknown> {
-  const content: Record<string, unknown>[] = [];
+}): AnthropicMessageResponse {
+  const content: (JsonObject | AnthropicToolUseBlock)[] = [];
   if (opts.text) {
     content.push({ text: opts.text, type: "text" });
   }
@@ -305,6 +388,10 @@ export const anthropicMessage = function anthropicMessage(opts: {
   };
 };
 
+/** Convert Cursor text events into Anthropic Messages SSE events.
+ * @param opts - Message identity, model, input usage, and source event stream.
+ * @returns An async stream of named Anthropic events and their payloads.
+ */
 export const anthropicSseEvents = async function* anthropicSseEvents(opts: {
   id: string;
   model: string;
@@ -312,7 +399,7 @@ export const anthropicSseEvents = async function* anthropicSseEvents(opts: {
   stream: AsyncIterable<CursorTextEvent>;
 }): AsyncGenerator<{
   event: string;
-  data: Record<string, unknown>;
+  data: JsonObject;
 }> {
   yield {
     data: {
@@ -369,7 +456,7 @@ export const anthropicSseEvents = async function* anthropicSseEvents(opts: {
       const idx = nextIndex;
       nextIndex += 1;
       const block = toolUseBlock(event.toolCall);
-      const input = block.input as Record<string, unknown>;
+      const input = isRecord(block.input) ? block.input : {};
       yield {
         data: {
           content_block: {
