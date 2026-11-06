@@ -14,6 +14,7 @@ export const installRoot = (): string => {
 
   // Compiled binary: resources sit next to cursor-api.exe.
   const exeDir = path.dirname(process.execPath);
+
   if (
     existsSync(path.join(exeDir, "bridge", "cursor-sdk-local-agent-bridge.mjs"))
   ) {

@@ -11,25 +11,32 @@ const dist = path.join(root, "dist");
 const bundleDir = path.join(dist, "cursor-api");
 
 rmSync(dist, { force: true, recursive: true });
+
 mkdirSync(bundleDir, { recursive: true });
 
 console.log("Staging bridge runtime…");
+
 await $`bun run scripts/stage-bridge.ts`.cwd(root);
 
 console.log("Compiling cursor-api.exe…");
+
 const exePath = path.join(bundleDir, "cursor-api.exe");
+
 await $`bun build src/cli.ts --compile --outfile ${exePath}`.cwd(root);
 
 const bridgeSrc = path.join(root, "bridge");
 const bridgeDst = path.join(bundleDir, "bridge");
+
 cpSync(bridgeSrc, bridgeDst, { recursive: true });
 
 const installScript = path.join(root, "..", "..", "scripts", "install.ps1");
+
 if (existsSync(installScript)) {
   cpSync(installScript, path.join(bundleDir, "install.ps1"));
 }
 
 const readme = path.join(bundleDir, "README.txt");
+
 await Bun.write(
   readme,
   [
@@ -47,7 +54,9 @@ await Bun.write(
 );
 
 console.log(`\nBuilt: ${bundleDir}`);
+
 console.log("  cursor-api.exe");
+
 console.log("  bridge/");
 
 if (!existsSync(path.join(bridgeDst, "node.exe"))) {

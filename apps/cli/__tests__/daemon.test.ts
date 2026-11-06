@@ -12,12 +12,14 @@ describe(tasklistOutputContainsPid, () => {
   it("returns true when stdout lists the PID", () => {
     const stdout =
       "cursor-api.exe               12345 Console                    1     45,678 K\n";
+
     expect(tasklistOutputContainsPid(stdout, 12_345)).toBeTruthy();
   });
 
   it("returns false for the no-match INFO line", () => {
     const stdout =
       "INFO: No tasks are running which match the specified criteria.\n";
+
     expect(tasklistOutputContainsPid(stdout, 12_345)).toBeFalsy();
   });
 
@@ -28,6 +30,7 @@ describe(tasklistOutputContainsPid, () => {
   it("does not match a PID that appears only as a substring", () => {
     const stdout =
       "cursor-api.exe               1234 Console                    1     45,678 K\n";
+
     expect(tasklistOutputContainsPid(stdout, 12_345)).toBeFalsy();
   });
 });
@@ -59,6 +62,7 @@ describe(runningConfigMatches, () => {
       port: DEFAULT_PORT,
       startedAt: "2026-01-01T00:00:00.000Z",
     };
+
     expect(runningConfigMatches(null, DEFAULT_PORT, apiKey)).toBeFalsy();
     expect(runningConfigMatches(state, 9000, apiKey)).toBeFalsy();
     expect(

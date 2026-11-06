@@ -15,11 +15,13 @@ const bridgeDir = path.join(root, "bridge");
 mkdirSync(bridgeDir, { recursive: true });
 
 const scriptSrc = path.join(bridgeDir, "cursor-sdk-local-agent-bridge.mjs");
+
 if (!existsSync(scriptSrc)) {
   throw new Error(`Missing bridge script at ${scriptSrc}`);
 }
 
 console.log("Installing bridge dependencies…");
+
 await $`bun install --frozen-lockfile --omit dev`.cwd(bridgeDir);
 
 const nodeExe = await (async (): Promise<string> => {
@@ -28,8 +30,10 @@ const nodeExe = await (async (): Promise<string> => {
     process.execPath.endsWith("bun")
   ) {
     const whereOutput = await $`where node`.text();
+
     return whereOutput.trim().split(/\r?\n/u)[0] ?? "";
   }
+
   return process.execPath;
 })();
 
@@ -40,4 +44,5 @@ if (!nodeExe || !existsSync(nodeExe)) {
 }
 
 copyFileSync(nodeExe, path.join(bridgeDir, "node.exe"));
+
 console.log(`Staged bridge runtime at ${bridgeDir}`);

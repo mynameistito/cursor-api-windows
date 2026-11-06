@@ -26,22 +26,28 @@ const isJsonValue = (value: unknown): value is JsonValue => {
   if (value === null) {
     return true;
   }
+
   if (Array.isArray(value)) {
     return value.every(isJsonValue);
   }
+
   switch (typeof value) {
     case "boolean": {
       return true;
     }
+
     case "number": {
       return true;
     }
+
     case "string": {
       return true;
     }
+
     case "object": {
       return Object.values(value).every(isJsonValue);
     }
+
     default: {
       return false;
     }
@@ -50,9 +56,11 @@ const isJsonValue = (value: unknown): value is JsonValue => {
 
 const readJson = async (response: Response): Promise<JsonValue> => {
   const value: unknown = await response.json();
+
   if (!isJsonValue(value)) {
     throw new Error("Response body was not valid JSON");
   }
+
   return value;
 };
 
@@ -71,13 +79,17 @@ const postWithOversizedContentLength =
       path: "/v1/chat/completions",
       port,
     });
+
     req.end();
     const [res] = await once(req, "response");
     const chunks: Buffer[] = [];
+
     for await (const chunk of res) {
       chunks.push(Buffer.from(chunk));
     }
+
     const body: unknown = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
+
     return { body, status: res.statusCode ?? 0 };
   };
 
@@ -102,16 +114,19 @@ describe(startHttpServer, () => {
   afterEach(async () => {
     await server.close();
     rmSync(tempAppData, { force: true, recursive: true });
+
     if (savedAppData === undefined) {
       delete process.env.APPDATA;
     } else {
       process.env.APPDATA = savedAppData;
     }
+
     if (savedCursorApiKey === undefined) {
       delete process.env.CURSOR_API_KEY;
     } else {
       process.env.CURSOR_API_KEY = savedCursorApiKey;
     }
+
     if (savedCursorSdkBridgeUrl === undefined) {
       delete process.env.CURSOR_SDK_BRIDGE_URL;
     } else {
@@ -147,6 +162,7 @@ describe(startHttpServer, () => {
     const response = await fetch(`http://127.0.0.1:${server.port}/v1/models`, {
       method: "POST",
     });
+
     const body = await readJson(response);
 
     expect(response.status).toBe(404);
@@ -168,6 +184,7 @@ describe(startHttpServer, () => {
         method: "POST",
       }
     );
+
     const body = await readJson(response);
 
     expect(response.status).toBe(401);
