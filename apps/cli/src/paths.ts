@@ -8,8 +8,10 @@ const projectRoot = path.join(srcDir, "..");
  * @returns The configured install root, bundled executable directory, or project root.
  */
 export const installRoot = (): string => {
-  if (process.env.CURSOR_API_HOME?.trim()) {
-    return process.env.CURSOR_API_HOME.trim();
+  const configuredHome = process.env.CURSOR_API_HOME?.trim();
+
+  if (configuredHome !== undefined && configuredHome !== "") {
+    return configuredHome;
   }
 
   // Compiled binary: resources sit next to cursor-api.exe.

@@ -44,6 +44,19 @@ describe(loadSettings, () => {
     });
   });
 
+  it("uses defaults for malformed or incorrectly typed settings", () => {
+    saveSettings({ autostart: false, port: DEFAULT_PORT });
+    const settingsPath = path.join(tempAppData, "cursor-api", "settings.json");
+
+    for (const contents of ["{", "[]", '{"port":"9000","autostart":"true"}']) {
+      writeFileSync(settingsPath, contents, "utf-8");
+      expect(loadSettings()).toStrictEqual({
+        autostart: false,
+        port: DEFAULT_PORT,
+      });
+    }
+  });
+
   it("round-trips saveSettings and loadSettings", () => {
     saveSettings({ autostart: true, port: 4242 });
     expect(loadSettings()).toStrictEqual({

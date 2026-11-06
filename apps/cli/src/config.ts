@@ -1,8 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import type { JsonValue } from "./api/types";
-
 export const APP_NAME = "cursor-api";
 export const DEFAULT_PORT = 6903;
 export const LOCAL_API_KEY_LITERAL = "cursor-local";
@@ -25,7 +23,7 @@ const DEFAULT_SETTINGS: Settings = {
 const configDir = (): string => {
   const base = process.env.APPDATA;
 
-  if (!base) {
+  if (base === undefined || base === "") {
     throw new Error("APPDATA is not set");
   }
 
@@ -61,18 +59,17 @@ export const ensureConfigDirs = (): void => {
   mkdirSync(logsDir(), { recursive: true });
 };
 
-const isSettingsObject = (
-  value: JsonValue
-): value is Record<string, JsonValue> =>
+interface SettingsCandidate {
+  autostart?: unknown;
+  port?: unknown;
+}
+
+const isSettingsObject = (value: unknown): value is SettingsCandidate =>
   value !== null &&
   !Array.isArray(value) &&
   Object.getPrototypeOf(new Object(value)) === Object.prototype;
 
-const parseSettings = (value: JsonValue): SettingsFile => {
-  if (!isSettingsObject(value)) {
-    return {};
-  }
-
+const parseSettings = (value: SettingsCandidate): SettingsFile => {
   const settings: SettingsFile = {};
 
   if (
@@ -82,12 +79,10 @@ const parseSettings = (value: JsonValue): SettingsFile => {
     settings.autostart = value.autostart;
   }
 
-  if (
-    "port" in value &&
-    Number.isFinite(Number(value.port)) &&
-    Number(value.port) === value.port
-  ) {
-    settings.port = value.port;
+  const parsedPort = Number(value.port);
+
+  if (Number.isFinite(parsedPort) && parsedPort === value.port) {
+    settings.port = parsedPort;
   }
 
   return settings;
@@ -99,8 +94,8 @@ const parseSettings = (value: JsonValue): SettingsFile => {
 export const loadSettings = (): Settings => {
   try {
     const raw = readFileSync(settingsPath(), "utf-8");
-    const value: JsonValue = JSON.parse(raw);
-    const parsed = parseSettings(value);
+    const value: unknown = JSON.parse(raw);
+    const parsed = isSettingsObject(value) ? parseSettings(value) : {};
 
     return {
       autostart: parsed.autostart ?? DEFAULT_SETTINGS.autostart,
