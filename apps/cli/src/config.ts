@@ -24,9 +24,11 @@ const DEFAULT_SETTINGS: Settings = {
 
 const configDir = (): string => {
   const base = process.env.APPDATA;
+
   if (!base) {
     throw new Error("APPDATA is not set");
   }
+
   return path.join(base, APP_NAME);
 };
 
@@ -72,12 +74,14 @@ const parseSettings = (value: JsonValue): SettingsFile => {
   }
 
   const settings: SettingsFile = {};
+
   if (
     "autostart" in value &&
     (value.autostart === true || value.autostart === false)
   ) {
     settings.autostart = value.autostart;
   }
+
   if (
     "port" in value &&
     Number.isFinite(Number(value.port)) &&
@@ -85,6 +89,7 @@ const parseSettings = (value: JsonValue): SettingsFile => {
   ) {
     settings.port = value.port;
   }
+
   return settings;
 };
 
@@ -96,6 +101,7 @@ export const loadSettings = (): Settings => {
     const raw = readFileSync(settingsPath(), "utf-8");
     const value: JsonValue = JSON.parse(raw);
     const parsed = parseSettings(value);
+
     return {
       autostart: parsed.autostart ?? DEFAULT_SETTINGS.autostart,
       port: parsed.port ?? DEFAULT_SETTINGS.port,

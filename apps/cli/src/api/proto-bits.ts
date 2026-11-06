@@ -7,9 +7,11 @@
  */
 export const toUint32 = function toUint32(value: number): number {
   const truncated = Math.trunc(value);
+
   if (truncated < 0) {
     return truncated + 4_294_967_296;
   }
+
   return truncated % 4_294_967_296;
 };
 
@@ -18,14 +20,17 @@ const bitAnd = function bitAnd(left: number, right: number): number {
   let b = Math.trunc(right);
   let result = 0;
   let place = 1;
+
   while (a > 0 || b > 0) {
     if (a % 2 === 1 && b % 2 === 1) {
       result += place;
     }
+
     a = Math.floor(a / 2);
     b = Math.floor(b / 2);
     place *= 2;
   }
+
   return result;
 };
 
@@ -40,14 +45,17 @@ export const bitXor = function bitXor(left: number, right: number): number {
   let b = Math.trunc(right);
   let result = 0;
   let place = 1;
+
   while (a > 0 || b > 0) {
     if (a % 2 !== b % 2) {
       result += place;
     }
+
     a = Math.floor(a / 2);
     b = Math.floor(b / 2);
     place *= 2;
   }
+
   return result;
 };
 

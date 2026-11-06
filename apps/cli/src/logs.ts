@@ -16,14 +16,17 @@ const logChannelLabel = (file: string): LogChannel => {
   if (file.includes("bridge")) {
     return "bridge";
   }
+
   if (file.includes("server")) {
     return "server";
   }
+
   return "daemon";
 };
 
 const logFile = (channel: LogChannel): string => {
   ensureConfigDirs();
+
   return path.join(logsDir(), `${channel}.log`);
 };
 
@@ -45,6 +48,7 @@ export const appendLog = (channel: LogChannel, line: string): void => {
  */
 export const openLogFd = (channel: LogChannel): number => {
   ensureConfigDirs();
+
   return openSync(logFile(channel), "a");
 };
 
@@ -58,22 +62,27 @@ export const readRecentLogs = (
   lines = 80
 ): string[] => {
   const allChannels: LogChannel[] = ["daemon", "server", "bridge"];
+
   const files =
     channel === "all" ? allChannels.map(logFile) : [logFile(channel)];
 
   const output: string[] = [];
+
   for (const file of files) {
     if (existsSync(file)) {
       const content = readFileSync(file, "utf-8").trim();
+
       if (content) {
         const label = logChannelLabel(file);
         const chunk = content.split("\n").slice(-lines);
+
         for (const line of chunk) {
           output.push(`[${label}] ${line}`);
         }
       }
     }
   }
+
   return output.slice(-lines);
 };
 
@@ -87,6 +96,7 @@ export const followLogs = async (
   const targets = channel === "all" ? allChannels : [channel];
 
   const positions = new Map<string, number>();
+
   for (const ch of targets) {
     const file = logFile(ch);
     positions.set(file, existsSync(file) ? statSync(file).size : 0);
@@ -97,13 +107,16 @@ export const followLogs = async (
   const poll = async (): Promise<void> => {
     for (const ch of targets) {
       const file = logFile(ch);
+
       if (existsSync(file)) {
         const { size } = statSync(file);
         const prev = positions.get(file) ?? 0;
+
         if (size > prev) {
           const buf = readFileSync(file);
           const chunk = buf.subarray(prev, size).toString("utf-8");
           positions.set(file, size);
+
           for (const line of chunk.split("\n")) {
             if (line.trim()) {
               process.stdout.write(`[${ch}] ${line}\n`);
@@ -112,6 +125,7 @@ export const followLogs = async (
         }
       }
     }
+
     await setTimeout(500);
     await poll();
   };

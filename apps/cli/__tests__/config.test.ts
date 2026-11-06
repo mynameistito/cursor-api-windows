@@ -18,6 +18,7 @@ describe(loadSettings, () => {
 
   afterEach(() => {
     rmSync(tempAppData, { force: true, recursive: true });
+
     if (savedAppData === undefined) {
       delete process.env.APPDATA;
     } else {

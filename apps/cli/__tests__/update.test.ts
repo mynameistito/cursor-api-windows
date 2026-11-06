@@ -33,6 +33,7 @@ describe(isUpdatingInstalledBinary, () => {
 
   afterEach(() => {
     Object.defineProperty(process, "execPath", { value: originalExecPath });
+
     if (tempDir !== null) {
       rmSync(tempDir, { force: true, recursive: true });
       tempDir = null;
@@ -74,6 +75,7 @@ describe(buildFinishSelfUpdateScript, () => {
 
   it("retries the executable swap and logs failures", () => {
     workDir = mkdtempSync(path.join(homedir(), ".cursor-api-update-work-"));
+
     const script = buildFinishSelfUpdateScript({
       parentPid: 1234,
       targetDir: "C:\\Programs\\cursor-api",
@@ -100,6 +102,7 @@ describe(buildFinishSelfUpdateScript, () => {
 
   it("does not restart the daemon when it was not running", () => {
     workDir = mkdtempSync(path.join(homedir(), ".cursor-api-update-work-"));
+
     const script = buildFinishSelfUpdateScript({
       parentPid: 1234,
       targetDir: "C:\\Programs\\cursor-api",

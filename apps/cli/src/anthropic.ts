@@ -95,15 +95,19 @@ const flattenContentBlock = (block: JsonValue): string => {
   if (isString(block)) {
     return block;
   }
+
   if (!isRecord(block)) {
     return "";
   }
+
   if (block.type === "text" && isString(block.text)) {
     return block.text;
   }
+
   if (block.type === "image") {
     return "[image]";
   }
+
   return isString(block.text) ? block.text : JSON.stringify(block);
 };
 
@@ -112,31 +116,39 @@ const flattenToolResultContent = function flattenToolResultContent(
   isError = false
 ): string {
   let text = "";
+
   if (isString(content)) {
     text = content;
   } else if (Array.isArray(content)) {
     const textParts: string[] = [];
+
     for (const block of content) {
       const part = flattenContentBlock(block);
+
       if (part) {
         textParts.push(part);
       }
     }
+
     text = textParts.join("\n");
   } else if (content !== null && content !== undefined) {
     text = String(content);
   }
+
   return isError ? `[tool error] ${text}` : text;
 };
 
 const parseToolArguments = (args: CursorToolCall["arguments"]): JsonObject => {
   const parsed: JsonObject = {};
+
   for (const [key, value] of Object.entries(args)) {
     const encoded = JSON.stringify(value);
+
     if (encoded !== undefined) {
       parsed[key] = JSON.parse(encoded);
     }
   }
+
   return parsed;
 };
 
@@ -146,21 +158,26 @@ const mapToolChoice = function mapToolChoice(
   if (!isRecord(tc)) {
     return undefined;
   }
+
   switch (tc.type) {
     case "auto": {
       return undefined;
     }
+
     case "any": {
       return "required";
     }
+
     case "none": {
       return "none";
     }
+
     case "tool": {
       return isString(tc.name)
         ? { function: { name: tc.name }, type: "function" }
         : undefined;
     }
+
     default: {
       return undefined;
     }
@@ -171,19 +188,23 @@ const imagePartFromBlock = function imagePartFromBlock(
   block: JsonObject
 ): JsonObject | null {
   const source = isRecord(block.source) ? block.source : null;
+
   if (source && source.type === "base64" && isString(source.data)) {
     const mediaType = isString(source.media_type)
       ? source.media_type
       : "image/png";
+
     return {
       image_url: { url: `data:${mediaType};base64,${source.data}` },
       type: "image_url",
     };
   }
+
   // url / file sources are best-effort: surface as text so we never crash.
   if (source && source.type === "url" && isString(source.url)) {
     return { image_url: { url: source.url }, type: "image_url" };
   }
+
   return null;
 };
 
@@ -192,20 +213,27 @@ const appendSystemMessages = (
   messages: JsonObject[]
 ): void => {
   const { system } = record;
+
   if (isString(system) && system.trim()) {
     messages.push({ content: system, role: "system" });
+
     return;
   }
+
   if (!Array.isArray(system)) {
     return;
   }
+
   const textParts: string[] = [];
+
   for (const block of system) {
     if (isRecord(block) && isString(block.text) && block.text) {
       textParts.push(block.text);
     }
   }
+
   const text = textParts.join("\n");
+
   if (text) {
     messages.push({ content: text, role: "system" });
   }
@@ -217,10 +245,12 @@ const appendAssistantMessage = (
 ): void => {
   const parts: JsonObject[] = [];
   const toolCalls: JsonObject[] = [];
+
   for (const block of blocks) {
     if (!isRecord(block)) {
       continue;
     }
+
     if (block.type === "text" && isString(block.text)) {
       parts.push({ text: block.text, type: "text" });
     } else if (block.type === "tool_use") {
@@ -234,13 +264,16 @@ const appendAssistantMessage = (
       });
     }
   }
+
   const assistant: JsonObject = {
     content: parts.length ? parts : null,
     role: "assistant",
   };
+
   if (toolCalls.length) {
     assistant.tool_calls = toolCalls;
   }
+
   messages.push(assistant);
 };
 
@@ -249,10 +282,12 @@ const appendUserMessage = (
   messages: JsonObject[]
 ): void => {
   const userParts: JsonObject[] = [];
+
   for (const block of blocks) {
     if (!isRecord(block)) {
       continue;
     }
+
     if (block.type === "tool_result") {
       messages.push({
         content: flattenToolResultContent(
@@ -271,6 +306,7 @@ const appendUserMessage = (
       );
     }
   }
+
   if (userParts.length) {
     messages.push({ content: userParts, role: "user" });
   }
@@ -284,12 +320,15 @@ const appendAnthropicMessages = (
     if (!isRecord(value)) {
       continue;
     }
+
     const { role: inputRole, content } = value;
     const role = inputRole === "assistant" ? "assistant" : "user";
+
     if (isString(content)) {
       messages.push({ content, role });
     } else {
       const blocks = asArray(content);
+
       if (role === "assistant") {
         appendAssistantMessage(blocks, messages);
       } else {
@@ -307,19 +346,23 @@ export const anthropicToChatBody = function anthropicToChatBody(
   body: JsonValue
 ): JsonObject {
   const record = isRecord(body) ? body : {};
+
   const out: JsonObject = {
     model: PRIMARY_MODEL,
     stream: record.stream === true,
   };
+
   const messages: JsonObject[] = [];
   appendSystemMessages(record, messages);
   appendAnthropicMessages(record, messages);
   out.messages = messages;
   const tools: JsonObject[] = [];
+
   for (const candidate of asArray(record.tools)) {
     if (!isRecord(candidate)) {
       continue;
     }
+
     const tool: JsonObject = {
       function: {
         name: isString(candidate.name) ? candidate.name : "",
@@ -330,18 +373,24 @@ export const anthropicToChatBody = function anthropicToChatBody(
       },
       type: "function",
     };
+
     if (isString(candidate.description) && isRecord(tool.function)) {
       tool.function.description = candidate.description;
     }
+
     tools.push(tool);
   }
+
   if (tools.length) {
     out.tools = tools;
   }
+
   const toolChoice = mapToolChoice(record.tool_choice);
+
   if (toolChoice !== undefined) {
     out.tool_choice = toolChoice;
   }
+
   return out;
 };
 
@@ -349,6 +398,7 @@ const toolUseBlock = function toolUseBlock(
   toolCall: CursorToolCall
 ): AnthropicToolUseBlock {
   const input = parseToolArguments(toolCall.arguments);
+
   return {
     id: `toolu_${crypto.randomUUID().replaceAll("-", "")}`,
     input,
@@ -370,12 +420,15 @@ export const anthropicMessage = function anthropicMessage(opts: {
   outputTokens: number;
 }): AnthropicMessageResponse {
   const content: (JsonObject | AnthropicToolUseBlock)[] = [];
+
   if (opts.text) {
     content.push({ text: opts.text, type: "text" });
   }
+
   for (const tc of opts.toolCalls) {
     content.push(toolUseBlock(tc));
   }
+
   return {
     content,
     id: opts.id,
@@ -422,6 +475,7 @@ export const anthropicSseEvents = async function* anthropicSseEvents(opts: {
   let nextIndex = 0;
   let outputChars = 0;
   let sawTool = false;
+
   for await (const event of opts.stream) {
     if (event.type === "text" && event.text) {
       if (textIndex === -1) {
@@ -436,6 +490,7 @@ export const anthropicSseEvents = async function* anthropicSseEvents(opts: {
           event: "content_block_start",
         };
       }
+
       outputChars += event.text.length;
       yield {
         data: {
@@ -453,6 +508,7 @@ export const anthropicSseEvents = async function* anthropicSseEvents(opts: {
         };
         textIndex = -1;
       }
+
       const idx = nextIndex;
       nextIndex += 1;
       const block = toolUseBlock(event.toolCall);
@@ -490,12 +546,14 @@ export const anthropicSseEvents = async function* anthropicSseEvents(opts: {
       break;
     }
   }
+
   if (textIndex !== -1) {
     yield {
       data: { index: textIndex, type: "content_block_stop" },
       event: "content_block_stop",
     };
   }
+
   yield {
     data: {
       delta: {

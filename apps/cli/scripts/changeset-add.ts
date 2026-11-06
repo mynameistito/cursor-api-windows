@@ -30,7 +30,9 @@ interface PackageJson {
 }
 
 type ChangesetType = "patch" | "minor" | "major";
+
 type PackageTarget = "cli" | "web";
+
 type PackageTargetArg = PackageTarget | "both";
 
 interface ResolvedTargets {
@@ -83,6 +85,7 @@ const readPackageJson = (packageJsonPath: string) => {
     const packageJson: PackageJson = JSON.parse(
       readFileSync(packageJsonPath, "utf-8")
     );
+
     return packageJson;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -196,15 +199,18 @@ const resolveTargets = (args: string[]): ResolvedTargets => {
 const args = process.argv.slice(2);
 const { targets, type: changesetType, summary } = resolveTargets(args);
 const monorepoRoot = findMonorepoRoot(import.meta.dirname);
+
 const rootPackageJson = readPackageJson(
   path.join(monorepoRoot, "package.json")
 );
+
 assertChangesetsCliInstalled(rootPackageJson, monorepoRoot);
 
 const frontmatter = targets
   .map((target) => {
     const manifestPath = path.join(monorepoRoot, packageManifestPaths[target]);
     const packageName = getPackageName(readPackageJson(manifestPath));
+
     return `"${packageName}": ${changesetType}`;
   })
   .join("\n");
@@ -221,13 +227,19 @@ ${summary.trim()}
 `;
 
 mkdirSync(changesetDir, { recursive: true });
+
 writeFileSync(filename, content);
+
 console.log(`✓ Created changeset: ${relativeFilename}`);
+
 for (const target of targets) {
   const packageName = getPackageName(
     readPackageJson(path.join(monorepoRoot, packageManifestPaths[target]))
   );
+
   console.log(`  Package: ${packageName}`);
 }
+
 console.log(`  Type: ${changesetType}`);
+
 console.log(`  Summary: ${summary}`);
